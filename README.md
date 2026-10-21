@@ -46,7 +46,7 @@ node --experimental-loader ./tests/loader.mjs tests/rules.mjs
 
 页面从 `main` 分支的根目录发布（`index.html` 在仓库根目录）。仓库里放了 `.nojekyll`，避免 Jekyll 丢掉文件。
 
-若 Pages 还没打开：仓库 Settings → Pages → Build and deployment → Deploy from a branch → Branch 选 `main`，Folder 选 `/ (root)` → Save。保存后等一分钟，打开 <https://dannywang0822.github.io/guan-dan/?v=2>。
+Pages 目前还没打开：这个仓库的令牌可以推代码，但不能改仓库设置。需要你点一次：仓库 Settings → Pages → Build and deployment → Deploy from a branch → Branch 选 `main`，Folder 选 `/ (root)` → Save。保存后等一分钟，打开 <https://dannywang0822.github.io/guan-dan/?v=2>。
 
 样式、脚本和牌面的地址都带 `?v=2`，更新后改这个版本号即可避开旧缓存。
 
