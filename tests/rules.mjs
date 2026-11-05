@@ -17,10 +17,10 @@ import {
   planTribute,
   powerValue,
   upgradeSteps,
-} from '../js/engine.js?v=2';
-import { chooseMove } from '../js/ai.js?v=2';
-import { Match } from '../js/controller.js?v=2';
-import { handLayout } from '../js/ui.js?v=2';
+} from '../js/engine.js?v=3';
+import { chooseMove } from '../js/ai.js?v=3';
+import { Match, unplayedPool } from '../js/controller.js?v=3';
+import { cardMetrics, handLayout } from '../js/ui.js?v=3';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -408,7 +408,13 @@ check('card art marks level and wild', () => {
   assert.ok(level.includes('级'));
   const wild = cardSVG('2', 'H', { level: true, wild: true, width: 60 });
   assert.ok(wild.includes('配'));
-  assert.ok(wild.includes('#FBE7CF') || wild.includes('#fbe7cf'));
+  assert.ok(wild.includes('#F6E4D0') || wild.includes('#f6e4d0'));
+  assert.equal(wild.includes('级'), false);
+  const heart = cardSVG('A', 'H', { width: 66 });
+  assert.ok(heart.toLowerCase().includes('#8c3a3a'));
+  assert.ok(jack.toLowerCase().includes('#1c1c1c'));
+  assert.equal(jack.includes('兔'), false);
+  assert.equal(backSVG({ width: 30 }).includes('兔'), false);
   assert.ok(backSVG({ width: 30 }).includes('<svg'));
 });
 
@@ -417,6 +423,107 @@ check('phone hand step', () => {
   assert.ok(layout.step > 11.5 && layout.step < 12.5, layout.step);
   assert.ok(layout.offset + layout.total <= 391);
   assert.equal(layout.cw, 60);
+});
+
+check('card sizes', () => {
+  const phone = cardMetrics(390);
+  const desk = cardMetrics(1200);
+  assert.ok(phone.hand >= 64 && phone.hand <= 68);
+  assert.ok(phone.play >= 40 && phone.play <= 44);
+  assert.ok(desk.hand >= 88 && desk.hand <= 96);
+  assert.ok(desk.play >= 56 && desk.play <= 60);
+});
+
+check('unplayed pool counts hands only', () => {
+  const hands = [deck.slice(0, 27), deck.slice(27, 54), deck.slice(54, 81), deck.slice(81, 108)];
+  const full = unplayedPool(hands, '2');
+  assert.equal(full.total, 108);
+  assert.equal(full.suits.S, 26);
+  assert.equal(full.ranks['2'], 8);
+  assert.equal(full.sj, 2);
+  assert.equal(full.bj, 2);
+  assert.equal(full.wild, 2);
+  assert.equal(full.levelCount, 8);
+  const played = hands[1][0];
+  const next = hands.map((hand, i) => (i === 1 ? hand.filter((c) => c.id !== played.id) : hand.slice()));
+  const left = unplayedPool(next, '2');
+  assert.equal(left.total, 107);
+  assert.equal(left.ranks[played.rank], played.rank === 'SJ' || played.rank === 'BJ' ? 8 : 7);
+  assert.equal(left.seatCounts[1], 26);
+});
+
+check('easy follows small, sharp yields to partner', () => {
+  const cards = createDeck();
+  const pair5 = take(cards, [['5', 'S'], ['5', 'H']]);
+  const pair4 = take(cards, [['4', 'S'], ['4', 'C']]);
+  const filler = take(cards, [['9', 'D'], ['K', 'C']]);
+  const hand = [...pair5, ...filler];
+  const current = identify(pair4, '2')[0];
+  const base = { partnerWinning: true, opponentMin: 12, partnerLen: 20, played: [], knownElsewhere: [] };
+  const easy = chooseMove(hand, '2', current, { ...base, difficulty: 'easy' });
+  const balanced = chooseMove(hand, '2', current, { ...base, difficulty: 'balanced' });
+  const sharp = chooseMove(hand, '2', current, { ...base, difficulty: 'sharp' });
+  assert.ok(easy);
+  assert.equal(easy.type, 'pair');
+  assert.equal(balanced, null);
+  assert.equal(sharp, null);
+  const intercept = chooseMove(hand, '2', current, { ...base, difficulty: 'sharp', partnerWinning: false, opponentMin: 1 });
+  assert.ok(intercept);
+  assert.equal(intercept.type, 'pair');
+});
+
+check('sharp feeds a one-card partner', () => {
+  const cards = createDeck();
+  const hand = take(cards, [['3', 'S'], ['3', 'H'], ['8', 'D'], ['Q', 'C']]);
+  const move = chooseMove(hand, '2', null, {
+    difficulty: 'sharp',
+    partnerWinning: false,
+    opponentMin: 12,
+    partnerLen: 1,
+    played: [],
+    knownElsewhere: [],
+  });
+  assert.equal(move.type, 'single');
+  assert.equal(move.cards[0].rank, '3');
+});
+
+check('public cards are remembered without exposing hands', () => {
+  const m = new Match();
+  const cards = createDeck();
+  m.setDifficulty('sharp');
+  m.loadPosition({
+    hands: [
+      take(cards, [['6', 'S'], ['7', 'D']]),
+      take(cards, [['8', 'C'], ['9', 'H']]),
+      take(cards, [['10', 'S'], ['J', 'D']]),
+      take(cards, [['Q', 'C'], ['K', 'S']]),
+    ],
+    level: '2',
+    turn: 0,
+  });
+  const lead = m.seats[0].hand[0];
+  assert.equal(m.play(0, [lead]).ok, true);
+  const ctx = m.aiContext(1);
+  assert.equal(ctx.difficulty, 'sharp');
+  assert.ok(ctx.played.some((c) => c.id === lead.id));
+  assert.equal('hands' in ctx, false);
+  assert.equal(m.seats[2].hand.length, 2);
+});
+
+check('easy and sharp stay legal', () => {
+  for (const difficulty of ['easy', 'sharp']) {
+    const m = new Match();
+    m.setDifficulty(difficulty);
+    m.startMatch();
+    let guard = 0;
+    while (m.phase === 'play' && guard++ < 48) {
+      const seat = m.turn;
+      const move = chooseMove(m.seats[seat].hand, m.level, m.trick.combo, m.aiContext(seat));
+      if (!m.trick.combo) assert.ok(move, difficulty);
+      const res = move ? m.play(seat, move.cards) : m.pass(seat);
+      assert.equal(res.ok, true, `${difficulty} ${res.reason}`);
+    }
+  }
 });
 
 if (failed) {

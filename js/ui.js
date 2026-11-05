@@ -1,3 +1,4 @@
+import { unplayedPool } from './controller.js?v=3';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -11,10 +12,54 @@ import {
   sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=2';
-import { chooseMove, listSuggestions } from './ai.js?v=2';
+} from './engine.js?v=3';
+import { chooseMove, listSuggestions } from './ai.js?v=3';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
+const COMPASS = ['南', '东', '北', '西'];
+const TONE = ['gold', 'cinnabar', 'bamboo', 'slate'];
+const DIFFS = [
+  ['easy', '轻松', '合法跟牌，偏出小牌。'],
+  ['balanced', '均衡', '尽量出小牌型、留炸弹，队友大牌一般不压。'],
+  ['sharp', '精算', '记公开牌，配合让牌与拦截，炸弹时机更稳，残局算手数。'],
+];
+const ARRANGE = {
+  rank: {
+    name: '点数',
+    now: '当前：按点数理牌',
+    body: '按本局单张大小排列：2 最小，级牌仅次于王，同点按花色。',
+  },
+  suit: {
+    name: '花色',
+    now: '当前：按花色理牌',
+    body: '黑桃、红桃、梅花、方块分列，同花色内按点数，王牌放在最后。',
+  },
+  group: {
+    name: '牌型',
+    now: '当前：按牌型理牌',
+    body: '炸弹、同花顺、钢板、木板、顺子优先成组，其余按点数。',
+  },
+};
+const PATTERN = {
+  single: '单张：按本局大小，大王 > 小王 > 级牌 > A > K > … > 2。',
+  pair: '对子：两张同点。级牌仅次于王，逢人配可补成对。',
+  triple: '三张：三张同点。级牌仅次于王，逢人配可补。',
+  fullhouse: '三带二：三张带一对，只比三张的点数，不比对子。',
+  straight: '顺子：固定 5 张，按牌面点数衔接，级牌不另算。A2345 最小，10JQKA 最大。',
+  tube: '木板：三连对，按牌面点数衔接，级牌不另算。可含 A23。',
+  plate: '钢板：两连三张，按牌面点数衔接，级牌不另算。可含 A2。',
+  straightflush: '同花顺：五张同花，按牌面点数衔接，级牌不另算。大于四炸、五炸，小于六炸及以上。',
+  jokerbomb: '天王炸：四张王，全场最大。',
+  bomb: '炸弹：四张及以上同点。张数多为大；同张数比点数，级牌最大。',
+};
+
+const DIFF_KEY = 'guandan-ink-difficulty';
+
+export function cardMetrics(width) {
+  if (width >= 1100) return { hand: 92, play: 58 };
+  if (width >= 800) return { hand: 80, play: 50 };
+  return { hand: 66, play: 42 };
+}
 
 export function handLayout(width, n, cardW = 60, extra = 0) {
   const cw = cardW;
@@ -28,6 +73,33 @@ export function handLayout(width, n, cardW = 60, extra = 0) {
   return { cw, ch: Math.round(cw / 0.7), step, offset, total };
 }
 
+function loadDifficulty() {
+  try {
+    const value = localStorage.getItem(DIFF_KEY);
+    if (value === 'easy' || value === 'balanced' || value === 'sharp') return value;
+  } catch {
+    /* 隐私模式没有本地存储时用均衡。 */
+  }
+  return 'balanced';
+}
+
+function saveDifficulty(value) {
+  try {
+    localStorage.setItem(DIFF_KEY, value);
+  } catch {
+    /* 忽略写不进本地存储的情况。 */
+  }
+}
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+  }[ch]));
+}
+
 function cardsApi() {
   return window.GuanDanCards;
 }
@@ -39,18 +111,23 @@ function svgCard(card, level, opts = {}) {
   const wild = isWild(card, level);
   const levelCard = !isJoker(card) && card.rank === level;
   return api.cardSVG(card.rank, card.suit, {
-    level: levelCard || wild,
+    level: levelCard && !wild,
     wild,
     selected: !!opts.selected,
     width: opts.width,
   });
 }
 
-function faceRow(cards, level, width) {
+function faceRow(cards, level, width, maxW) {
   if (!cards?.length) return '';
-  const overlap = Math.round(width * 0.46);
+  const n = cards.length;
+  let step = Math.round(width * 0.46);
+  if (n > 1 && maxW) {
+    const fit = Math.floor((maxW - 8 - width) / (n - 1));
+    if (fit < step) step = Math.max(14, fit);
+  }
   return `<div class="mini-row">${cards.map((card, i) => `
-    <div class="mini" style="width:${width}px;margin-left:${i ? -overlap : 0}px;z-index:${i}">
+    <div class="mini" style="width:${width}px;margin-left:${i ? step - width : 0}px;z-index:${i}">
       ${svgCard(card, level, { width })}
     </div>`).join('')}</div>`;
 }
@@ -65,6 +142,33 @@ function orderedHand(hand, level, mode) {
     return flat;
   }
   return sortCards(hand, level).map((card) => ({ card, gap: false }));
+}
+
+function washSvg() {
+  return `<svg class="wash" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <path fill="#1C1C1C" opacity=".05" d="M0 500 C140 450 200 390 300 430 C400 360 470 460 590 410 C720 340 790 470 930 400 C1040 340 1120 430 1200 380 V800 H0Z"/>
+    <path fill="#1C1C1C" opacity=".07" d="M0 600 C180 540 250 630 400 560 C530 500 600 610 760 540 C920 460 1020 600 1200 520 V800 H0Z"/>
+    <g fill="none" stroke="#1C1C1C" stroke-linecap="round" opacity=".16">
+      <path d="M1088 800 V150" stroke-width="4"/>
+      <path d="M1088 230 H1036 M1088 320 H1140 M1088 420 H1048 M1088 530 H1132" stroke-width="2"/>
+      <path d="M1148 800 V240" stroke-width="3"/>
+      <path d="M1148 330 H1190 M1148 450 H1104" stroke-width="2"/>
+      <path d="M1088 170 C1130 120 1180 160 1164 210" stroke="#5B7268" stroke-width="2"/>
+    </g>
+    <g fill="none" stroke="#1C1C1C" stroke-linecap="round" opacity=".1">
+      <path d="M64 800 V280" stroke-width="3"/>
+      <path d="M64 360 H24 M64 470 H104" stroke-width="2"/>
+    </g>
+  </svg>`;
+}
+
+function ensoSvg() {
+  return `<div class="enso" aria-hidden="true">
+    <svg class="enso-svg" viewBox="0 0 160 160">
+      <path d="M80 18 C122 20 144 52 142 88 C140 128 108 148 74 146 C38 144 16 116 20 80 C24 42 50 20 86 24" fill="none" stroke="#1C1C1C" stroke-width="7" stroke-linecap="round" opacity=".72"/>
+    </svg>
+    <span class="seal"><i>掼</i><i>蛋</i></span>
+  </div>`;
 }
 
 export function mount(app, game) {
@@ -83,6 +187,7 @@ class UI {
     this.selected = new Set();
     this.arrange = 'rank';
     this.rules = false;
+    this.settings = false;
     this.muted = false;
     this.toastMsg = '';
     this.toastT = 0;
@@ -90,6 +195,19 @@ class UI {
     this.aiT = 0;
     this.selKey = '';
     this.hintIndex = -1;
+    this.counterPin = null;
+    this.counterSheet = false;
+    this.seenHand = null;
+    this.difficulty = loadDifficulty();
+    game.setDifficulty(this.difficulty);
+  }
+
+  width() {
+    return this.app.clientWidth || window.innerWidth || 390;
+  }
+
+  isDesktop() {
+    return this.width() >= 1100;
   }
 
   onClick(event) {
@@ -104,8 +222,10 @@ class UI {
   }
 
   onKey(event) {
-    if (event.key === 'Escape' && this.rules) {
+    if (event.key === 'Escape' && (this.rules || this.settings || this.counterSheet)) {
       this.rules = false;
+      this.settings = false;
+      this.counterSheet = false;
       this.paint();
     } else if (event.key === 'Enter') {
       const phase = this.game.phase;
@@ -123,6 +243,7 @@ class UI {
     const game = this.game;
     if (name === 'rules') {
       this.rules = true;
+      this.settings = false;
       this.paint();
       return;
     }
@@ -131,8 +252,47 @@ class UI {
       this.paint();
       return;
     }
+    if (name === 'settings') {
+      this.settings = true;
+      this.rules = false;
+      this.paint();
+      return;
+    }
+    if (name === 'close-settings') {
+      this.settings = false;
+      this.paint();
+      return;
+    }
     if (name === 'mute') {
       this.muted = !this.muted;
+      this.paint();
+      return;
+    }
+    if (name.startsWith('diff-')) {
+      const difficulty = name.slice(5);
+      if (difficulty === 'easy' || difficulty === 'balanced' || difficulty === 'sharp') {
+        this.difficulty = difficulty;
+        game.setDifficulty(difficulty);
+        saveDifficulty(difficulty);
+      }
+      this.paint();
+      return;
+    }
+    if (name === 'counter-close') {
+      this.counterPin = false;
+      this.counterSheet = false;
+      this.paint();
+      return;
+    }
+    if (name === 'counter-open' || name === 'counter-toggle') {
+      const open = this.counterVisible() && (this.isDesktop() || this.counterSheet);
+      if (name === 'counter-toggle' && open) {
+        this.counterPin = false;
+        this.counterSheet = false;
+      } else {
+        this.counterPin = true;
+        this.counterSheet = true;
+      }
       this.paint();
       return;
     }
@@ -140,14 +300,19 @@ class UI {
       this.selected.clear();
       this.hintIndex = -1;
       this.selKey = '';
+      game.setDifficulty(this.difficulty);
       game.startMatch();
       this.paint({ live: true });
       return;
     }
     if (name === 'arrange') {
       this.arrange = this.arrange === 'rank' ? 'suit' : this.arrange === 'suit' ? 'group' : 'rank';
-      const label = { rank: '点数', suit: '花色', group: '分组' }[this.arrange];
-      this.setToast(`已按${label}理牌`);
+      this.paint();
+      return;
+    }
+    if (name.startsWith('mode-')) {
+      const mode = name.slice(5);
+      if (ARRANGE[mode]) this.arrange = mode;
       this.paint();
       return;
     }
@@ -226,7 +391,6 @@ class UI {
     this.hintIndex = (this.hintIndex + 1) % list.length;
     const move = list[this.hintIndex];
     this.selected = new Set(move.cards.map((c) => c.id));
-    this.setToast(`提示：${typeLabel(move)}`);
     this.paint();
   }
 
@@ -281,9 +445,41 @@ class UI {
     }
   }
 
+  syncHand() {
+    const handNo = this.game.handNo;
+    if (this.seenHand === handNo) return;
+    this.seenHand = handNo;
+    this.counterPin = null;
+    this.counterSheet = false;
+  }
+
+  counterVisible() {
+    if (this.game.phase === 'start') return false;
+    if (this.counterPin === true) return true;
+    if (this.counterPin === false) return false;
+    return this.game.seats.some((seat) => seat.hand.length < 10);
+  }
+
   paint({ live = false } = {}) {
+    this.syncHand();
     this.syncSelection();
+    const previous = this.app.querySelector('.hand-scroll');
+    if (previous) this.handScroll = previous.scrollLeft;
     this.app.innerHTML = this.html();
+    const scroller = this.app.querySelector('.hand-scroll');
+    if (scroller) {
+      scroller.scrollLeft = this.handScroll || 0;
+      const picked = scroller.querySelector('.hc.selected');
+      if (picked) {
+        const left = picked.offsetLeft;
+        const right = left + picked.offsetWidth;
+        const view = scroller.scrollLeft + scroller.clientWidth;
+        if (left < scroller.scrollLeft + 8 || right > view - 8) {
+          scroller.scrollLeft = Math.max(0, left - 12);
+          this.handScroll = scroller.scrollLeft;
+        }
+      }
+    }
     if (live) {
       this.playSfx();
       this.queueAI();
@@ -298,18 +494,25 @@ class UI {
     blip(game.sfx);
   }
 
+  aiDelay(bomb) {
+    const narrow = this.width() < 800;
+    if (narrow) return bomb ? 520 : 400;
+    if (this.game.difficulty === 'sharp') return bomb ? 780 : 620;
+    return bomb ? 860 : 640;
+  }
+
   queueAI() {
     clearTimeout(this.aiT);
     const game = this.game;
     if (game.phase === 'play' && game.turn !== 0) {
       const bomb = game.trick?.combo && (game.trick.combo.type === 'bomb' || game.trick.combo.type === 'straightflush' || game.trick.combo.type === 'jokerbomb');
-      this.aiT = setTimeout(() => this.aiStep(), bomb ? 900 : 680);
+      this.aiT = setTimeout(() => this.aiStep(), this.aiDelay(bomb));
     } else if (game.phase === 'tributeReveal') {
       this.aiT = setTimeout(() => {
         if (this.game.phase !== 'tributeReveal') return;
         this.game.ackTribute();
         this.paint({ live: true });
-      }, 1800);
+      }, 1600);
     }
   }
 
@@ -338,7 +541,14 @@ class UI {
 
   html() {
     if (this.game.phase === 'start') return `${this.startHtml()}${this.rulesHtml()}${this.toastHtml()}`;
-    return `${this.tableHtml()}${this.overlayHtml()}${this.rulesHtml()}${this.toastHtml()}`;
+    return `${this.tableHtml()}${this.counterSheetHtml()}${this.overlayHtml()}${this.settingsHtml()}${this.rulesHtml()}${this.toastHtml()}`;
+  }
+
+  diffGrid() {
+    return `<div class="diff-grid">${DIFFS.map(([id, name, text]) => `
+      <button type="button" class="diff-card${this.difficulty === id ? ' on' : ''}" data-act="diff-${id}" aria-pressed="${this.difficulty === id}">
+        <b>${name}</b><span>${text}</span>
+      </button>`).join('')}</div>`;
   }
 
   startHtml() {
@@ -346,155 +556,225 @@ class UI {
     const fan = api ? `
       <div class="fan">
         <div class="fan-card tilt-l">${api.cardSVG('A', 'S', { width: 78 })}</div>
-        <div class="fan-card">${api.cardSVG('2', 'H', { level: true, wild: true, width: 86 })}</div>
+        <div class="fan-card">${api.cardSVG('2', 'H', { wild: true, width: 86 })}</div>
         <div class="fan-card tilt-r">${api.cardSVG('BJ', 'J', { width: 78 })}</div>
       </div>` : '';
     return `
       <section class="start">
-        <p class="brand-kicker">兔镖局</p>
+        ${washSvg()}
+        <p class="kicker">水墨素雅 · 四人分组</p>
         <h1>掼蛋</h1>
-        <p class="lead">四人分组，从二打到 A。你和对家一队，先过 A 的一边获胜。</p>
+        <p class="lead">从二打到 A。你和对家一队，先过 A 的一边获胜。</p>
         ${fan}
-        <ul class="brief">
-          <li>两副牌，每人 27 张。红桃级牌是逢人配。</li>
-          <li>点牌出牌，再点取消。可出同牌型更大的，或炸弹。</li>
-          <li>头游 + 二游升 3 级，头游 + 三游升 2 级，头游 + 末游升 1 级。</li>
-        </ul>
+        <p class="diff-head">电脑难度</p>
+        ${this.diffGrid()}
+        <p class="diff-note">三家电脑同一难度，对局中可在设置里更改</p>
         <div class="start-actions">
-          <button type="button" class="btn play" data-act="start">开始游戏</button>
-          <button type="button" class="btn hint" data-act="rules">规则说明</button>
+          <button type="button" class="btn ghost" data-act="rules">规则说明</button>
+          <button type="button" class="btn play" data-act="start">开始对局</button>
         </div>
       </section>`;
   }
 
   tableHtml() {
     const game = this.game;
+    const width = this.width();
+    const metrics = cardMetrics(width);
+    const desktop = width >= 1100;
     const mine = game.turn === 0 && game.phase === 'play';
-    const width = this.app.clientWidth || window.innerWidth || 390;
-    const cardW = width >= 1100 ? 78 : width >= 800 ? 68 : 60;
     const items = orderedHand(game.seats[0].hand, game.level, this.arrange);
     const gapCount = items.filter((item) => item.gap).length;
-    const gapW = gapCount && width < 800 ? 4 : 8;
-    const layout = handLayout(width, Math.max(1, items.length), cardW, gapCount * gapW);
-    const wild = svgCard({ rank: game.level, suit: 'H' }, game.level, { width: 28 });
+    const gapW = gapCount && width < 800 ? 6 : 10;
+    const handAvail = desktop ? Math.max(360, width - 300) : width;
+    const layout = handLayout(handAvail, Math.max(1, items.length), metrics.hand, gapCount * gapW);
+    const minStep = width < 800 ? 24 : 20;
+    if (items.length > 1 && layout.step < minStep) {
+      layout.step = minStep;
+      layout.total = layout.cw + (items.length - 1) * layout.step + gapCount * gapW;
+      layout.offset = 12;
+    }
+    const innerW = Math.max(handAvail, Math.ceil(layout.offset + layout.total + 12));
+    const sideMax = desktop ? 260 : Math.max(112, Math.floor((width - 110) / 2));
+    const wideMax = desktop ? 560 : width - 36;
+    const wild = svgCard({ rank: game.level, suit: 'H' }, game.level, { width: 26 });
     const returning = game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return';
     let x = layout.offset;
     const hand = items.map((item, i) => {
       if (item.gap) x += gapW;
       const selected = this.selected.has(item.card.id);
       const dim = returning && game.seats[0].hand.some(isReturnable) && !isReturnable(item.card);
-      const top = selected ? 2 : 16;
+      const top = selected ? 0 : 14;
       const html = `
         <button type="button" class="hc${selected ? ' selected' : ''}${dim ? ' dim' : ''}" data-cid="${item.card.id}"
-          style="left:${x}px;top:${top}px;width:${layout.cw}px;z-index:${selected ? 60 : i + 1}"
-          aria-label="${cardText(item.card)}">
+          style="left:${x}px;top:${top}px;width:${layout.cw}px;z-index:${selected ? 80 : i + 1}"
+          aria-label="${esc(cardText(item.card))}" aria-pressed="${selected}">
           ${svgCard(item.card, game.level, { selected, width: layout.cw })}
         </button>`;
       x += layout.step;
       return html;
     }).join('');
+    const owner = game.levelOwner == null ? '' : game.levelOwner === 0 ? ' · 我方' : ' · 对方';
+    const short = game.seats.filter((seat) => seat.hand.length < 10).map((seat) => seat.name);
+    const banner = !desktop && this.counterVisible() && !this.counterSheet && short.length
+      ? `<button type="button" class="counter-banner" data-act="counter-open">${esc(short.join('、'))}手牌 &lt; 10，记牌器已开启</button>`
+      : '';
+    const counterOpen = this.counterVisible();
 
     return `
       <header class="top">
-        <button type="button" class="text-btn" data-act="rules">规则</button>
         <div class="brand">掼蛋</div>
-        <div class="lv">我方 ${game.teamLevel[0]} · 对方 ${game.teamLevel[1]}</div>
-        <button type="button" class="text-btn" data-act="mute">${this.muted ? '静音' : '声音'}</button>
+        <div class="meta">
+          <span class="chip">我方 ${esc(game.teamLevel[0])} · 对方 ${esc(game.teamLevel[1])}</span>
+          <span class="chip">第 ${game.handNo} 局 · 打 ${esc(game.level)}${esc(owner)}</span>
+          <span class="wild-pill">逢人配 ${wild}</span>
+        </div>
+        <button type="button" class="text-btn" data-act="rules">规则</button>
+        <button type="button" class="text-btn" data-act="settings">设置</button>
+        <button type="button" class="text-btn${counterOpen ? ' on' : ''}" data-act="counter-toggle">记牌</button>
       </header>
-      <div class="subbar">
-        <span>第 ${game.handNo} 局</span>
-        <span>打 ${game.level}${game.levelOwner == null ? '' : game.levelOwner === 0 ? ' · 我方' : ' · 对方'}</span>
-        <span class="wild-pill">逢人配 ${wild}</span>
-      </div>
-      <main class="felt">
-        ${this.seatStrip(2)}
-        <section class="mid">
-          ${this.sideSeat(3)}
-          <div class="center">
-            <div class="slot">${this.slot(2)}</div>
-            <div class="slot-row">
-              <div class="slot">${this.slot(3)}</div>
-              <div class="slot">${this.slot(1)}</div>
-            </div>
-            <div class="slot">${this.slot(0)}</div>
-            <p class="status">${game.message || ''}</p>
+      <div class="stage">
+        ${washSvg()}
+        <div class="mat">
+          ${this.seatBlock(2, metrics.play, wideMax, 'north')}
+          <div class="equator">
+            ${this.seatBlock(3, metrics.play, sideMax, 'west')}
+            ${ensoSvg()}
+            ${this.seatBlock(1, metrics.play, sideMax, 'east')}
           </div>
-          ${this.sideSeat(1)}
-        </section>
-        <section class="me-zone">
-          ${this.tributeBar()}
-          <div class="me-bar">
-            <div class="who">
-              <div class="av me">我</div>
-              <div>
-                <b>你</b>
-                <span>${game.seats[0].finish ? FINISH_NAME[game.seats[0].finish] : `${game.seats[0].hand.length} 张`}</span>
-              </div>
+          <p class="status">${esc(game.message || '')}</p>
+        </div>
+        ${this.tributeBar()}
+        ${this.ruleBarHtml()}
+        <div class="hand-zone">
+          ${this.seatBlock(0, metrics.play, wideMax, 'mine')}
+          <div class="hand-scroll${innerW > handAvail + 8 ? ' can-pan' : ''}">
+            <div class="hand" style="width:${innerW}px;height:${layout.ch + 18}px">
+              ${items.length ? hand : '<p class="empty-hand">牌已出完</p>'}
             </div>
-            <div class="btns">
-              <button type="button" class="btn hint" data-act="arrange">理牌</button>
-              <button type="button" class="btn hint" data-act="hint" ${mine ? '' : 'disabled'}>提示</button>
-              <button type="button" class="btn pass" data-act="pass" ${mine ? '' : 'disabled'}>不出</button>
-              <button type="button" class="btn play" data-act="play" ${mine ? '' : 'disabled'}>出牌</button>
-            </div>
-          </div>
-          <p class="pick">${this.selectionNote()}</p>
-          <div class="hand" style="height:${layout.ch + 20}px">${items.length ? hand : '<p class="empty-hand">牌已出完</p>'}</div>
-        </section>
-      </main>`;
-  }
-
-  seatStrip(id) {
-    const seat = this.game.seats[id];
-    return `
-      <section class="zone partner">
-        <div class="who">
-          <div class="av ally">${seat.stamp}</div>
-          <div>
-            <b>${seat.name} · 队友</b>
-            <span>${seat.finish ? FINISH_NAME[seat.finish] : `${seat.hand.length} 张`}</span>
           </div>
         </div>
-      </section>`;
-  }
-
-  sideSeat(id) {
-    const seat = this.game.seats[id];
-    return `
-      <section class="zone side">
-        <div class="av foe">${seat.stamp}</div>
-        <b>${seat.name}</b>
-        <span>${seat.finish ? FINISH_NAME[seat.finish] : `${seat.hand.length} 张`}</span>
-      </section>`;
-  }
-
-  slot(id) {
-    const game = this.game;
-    const seat = game.seats[id];
-    const hot = game.trick?.winner === id;
-    if (!seat.shown) {
-      return `<div class="slot-empty${game.turn === id && game.phase === 'play' ? ' turn' : ''}">${game.turn === id && game.phase === 'play' ? '思考' : ''}</div>`;
-    }
-    if (seat.shown.pass) return `<div class="pass-pill">${seat.name}不出</div>`;
-    const w = window.innerWidth >= 800 ? 46 : 34;
-    return `
-      <div class="trick${hot ? ' hot' : ''}">
-        <span class="tag">${seat.name} · ${typeLabel(seat.shown.combo)}</span>
-        ${faceRow(seat.shown.cards, game.level, w)}
+        ${banner}
+        <aside class="dock">
+          ${desktop && counterOpen ? this.counterHtml() : ''}
+          ${this.buttonsHtml(mine)}
+        </aside>
       </div>`;
   }
 
-  selectionNote() {
+  seatBlock(id, cardW, maxW, extra) {
+    const seat = this.game.seats[id];
+    const hot = this.game.turn === id && this.game.phase === 'play';
+    const count = seat.finish ? FINISH_NAME[seat.finish] : `剩余 ${seat.hand.length} 张`;
+    return `
+      <section class="seat ${TONE[id]}${hot ? ' turn' : ''} ${extra || ''}">
+        <div class="seat-h"><b>${COMPASS[id]} · ${esc(seat.name)}</b><span>${esc(count)}</span></div>
+        ${this.pileHtml(id, cardW, maxW)}
+      </section>`;
+  }
+
+  pileHtml(id, cardW, maxW) {
     const game = this.game;
-    if (game.phase === 'tributeChoice') return game.message;
-    if (game.phase !== 'play' || game.turn !== 0) {
-      return game.phase === 'play' ? `${game.seats[game.turn].name}出牌` : '';
+    const seat = game.seats[id];
+    const thinking = game.turn === id && game.phase === 'play' && !seat.shown;
+    if (!seat.shown) return thinking && id !== 0 ? `<p class="think">思考</p>` : '';
+    if (seat.shown.pass) {
+      return `<div class="pass-mark"><svg viewBox="0 0 86 18" aria-hidden="true"><path d="M4 12 Q 32 2 82 11" fill="none" stroke="#1C1C1C" stroke-width="2.6" stroke-linecap="round"/></svg><span>${esc(seat.name)} · 不出</span></div>`;
     }
-    const cards = game.seats[0].hand.filter((c) => this.selected.has(c.id));
-    if (!cards.length) return game.trick?.combo ? `要大过 ${typeLabel(game.trick.combo)}，或出炸弹` : '选牌后点出牌';
-    const ev = evaluateSelection(cards, game.level, game.trick?.combo || null);
-    if (!ev.ok) return `${cards.length} 张 · ${ev.reason}`;
-    return `${cards.length} 张 · ${typeLabel(ev.combo)}`;
+    const hot = game.trick?.winner === id;
+    return `
+      <div class="pile${hot ? ' hot' : ''}">
+        <div class="pile-label">${esc(seat.name)} · ${esc(typeLabel(seat.shown.combo))}</div>
+        ${faceRow(seat.shown.cards, game.level, cardW, maxW)}
+        ${hot ? '<span class="max-badge">最大</span>' : ''}
+      </div>`;
+  }
+
+  ruleBarHtml() {
+    const info = ARRANGE[this.arrange] || ARRANGE.rank;
+    const chips = Object.entries(ARRANGE).map(([id, item]) => `
+      <button type="button" class="mode-chip${this.arrange === id ? ' on' : ''}" data-act="mode-${id}" aria-pressed="${this.arrange === id}">${item.name}</button>`).join('');
+    const pattern = this.patternLine();
+    return `
+      <section class="rulebar" aria-live="polite">
+        <div class="modes">${chips}</div>
+        <p class="rule-now"><span class="rule-seal">规则</span><span><b>${esc(info.now)}</b>${esc(info.body)}</span></p>
+        ${pattern ? `<p class="pattern-line">${esc(pattern)}</p>` : ''}
+      </section>`;
+  }
+
+  patternLine() {
+    const game = this.game;
+    if (game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return') {
+      return '还贡：还一张牌面 ≤10 的牌。没有小牌时还最小的非王牌。';
+    }
+    if (game.phase !== 'play') return '';
+    const cards = game.seats[0].hand.filter((card) => this.selected.has(card.id));
+    if (!cards.length) return '';
+    const shape = evaluateSelection(cards, game.level, null);
+    if (!shape.ok) return shape.reason;
+    const rule = PATTERN[shape.combo.type] || typeLabel(shape.combo);
+    if (game.turn !== 0 || !game.trick?.combo) return rule;
+    const beat = evaluateSelection(cards, game.level, game.trick.combo);
+    if (!beat.ok) return `${rule} ${beat.reason}`;
+    return rule;
+  }
+
+  buttonsHtml(mine) {
+    return `
+      <div class="btns">
+        <button type="button" class="btn ghost" data-act="arrange">理牌</button>
+        <button type="button" class="btn ghost" data-act="hint" ${mine ? '' : 'disabled'}>提示</button>
+        <button type="button" class="btn pass" data-act="pass" ${mine ? '' : 'disabled'}>不出</button>
+        <button type="button" class="btn play" data-act="play" ${mine ? '' : 'disabled'}>出牌</button>
+      </div>`;
+  }
+
+  counterHtml() {
+    const game = this.game;
+    const pool = unplayedPool(game.seats.map((seat) => seat.hand), game.level);
+    const rows = game.seats.map((seat, id) => {
+      const count = seat.finish && seat.hand.length === 0 ? FINISH_NAME[seat.finish] : `${seat.hand.length} 张`;
+      return `<li class="who-row ${TONE[id]}"><i></i><span>${COMPASS[id]} · ${esc(seat.name)}</span><b>${esc(count)}</b></li>`;
+    }).join('');
+    const suits = [
+      ['S', '黑桃', '♠', ''],
+      ['H', '红桃', '♥', 'red'],
+      ['C', '梅花', '♣', ''],
+      ['D', '方块', '♦', 'red'],
+    ].map(([id, name, symbol, tone]) => `
+      <div class="suit-cell ${tone}"><span>${symbol}</span><small>${name}</small><b>${pool.suits[id]}</b></div>`).join('');
+    const cells = (ranks) => ranks.map((rank) => {
+      const n = pool.ranks[rank];
+      return `<div class="rank-cell${n ? '' : ' out'}"><b>${rank}</b><em>${n || '出完'}</em></div>`;
+    }).join('');
+    return `
+      <section class="counter">
+        <header class="counter-h">
+          <h2>记牌器</h2>
+          <p class="fine">手牌 &lt; 10 自动开启</p>
+          <p class="fine">只统计未出牌池与各家张数，不看别人手牌。</p>
+        </header>
+        <h3>各家剩余</h3>
+        <ul class="who-list">${rows}</ul>
+        <h3>花色剩余</h3>
+        <div class="suit-row">${suits}</div>
+        <h3>点数剩余</h3>
+        <div class="rank-grid">${cells(['2', '3', '4', '5', '6', '7', '8'])}</div>
+        <div class="rank-grid six">${cells(['9', '10', 'J', 'Q', 'K', 'A'])}</div>
+        <div class="joker-row">
+          <div><b>逢人配</b><em>${pool.wild}</em></div>
+          <div><b>小王</b><em>${pool.sj}</em></div>
+          <div><b>大王</b><em>${pool.bj}</em></div>
+        </div>
+        <p class="level-left">级牌 ${esc(game.level)} 还剩 ${pool.levelCount} 张</p>
+        <button type="button" class="btn ghost wide" data-act="counter-close">收起记牌器</button>
+        <p class="fine">任一家低于 10 张时自动开启，可手动关闭</p>
+      </section>`;
+  }
+
+  counterSheetHtml() {
+    if (this.isDesktop() || !this.counterVisible() || !this.counterSheet) return '';
+    return `<div class="overlay counter-overlay"><div class="sheet counter-sheet">${this.counterHtml()}</div></div>`;
   }
 
   tributeBar() {
@@ -507,7 +787,7 @@ class UI {
           <div class="banner-card">${svgCard(waiting.action.card, game.level, { width: 48 })}</div>
           <div>
             <b>进贡</b>
-            <p>${game.message}</p>
+            <p>${esc(game.message)}</p>
           </div>
           <button type="button" class="btn play" data-act="give">确认进贡</button>
         </div>`;
@@ -516,7 +796,7 @@ class UI {
       <div class="banner">
         <div>
           <b>还贡</b>
-          <p>${game.message}</p>
+          <p>${esc(game.message)}</p>
         </div>
         <button type="button" class="btn play" data-act="return">确认还贡</button>
       </div>`;
@@ -526,7 +806,7 @@ class UI {
     const game = this.game;
     if (game.phase === 'handEnd') return this.sheet(this.handEndInner(), '<button type="button" class="btn play" data-act="continue">继续</button>');
     if (game.phase === 'tributeReveal') {
-      const lines = (game.tribute?.lines || []).map((line) => `<li>${line}</li>`).join('');
+      const lines = (game.tribute?.lines || []).map((line) => `<li>${esc(line)}</li>`).join('');
       return this.sheet(`<h2>${game.tribute?.resist ? '抗贡' : '进贡'}</h2><ul class="rank-list">${lines}</ul>`, '<button type="button" class="btn play" data-act="ack">开始出牌</button>');
     }
     if (game.phase === 'matchEnd') {
@@ -535,7 +815,7 @@ class UI {
         <h2>${win ? '我方过 A' : '对方过 A'}</h2>
         <p class="lead-ink">${win ? '这局搭档配合赢下了整场。' : '对方先过了 A。再来一局可以从头打。'}</p>
         ${this.rankList()}
-        <p class="level-line">我方 ${game.teamLevel[0]} · 对方 ${game.teamLevel[1]}</p>
+        <p class="level-line">我方 ${esc(game.teamLevel[0])} · 对方 ${esc(game.teamLevel[1])}</p>
       `, '<button type="button" class="btn play" data-act="restart">再来一局</button>');
     }
     return '';
@@ -554,19 +834,35 @@ class UI {
     return `
       <h2>本局结束</h2>
       ${this.rankList()}
-      <p class="level-line">${upgrade}</p>
-      <p class="level-line">下一局打 ${game.level}，逢人配 ${SUIT_SYMBOL.H}${game.level}</p>`;
+      <p class="level-line">${esc(upgrade)}</p>
+      <p class="level-line">下一局打 ${esc(game.level)}，逢人配 ${SUIT_SYMBOL.H}${esc(game.level)}</p>`;
   }
 
   rankList() {
     const game = this.game;
     const order = game.lastOrder || [];
     if (!order.length) return '';
-    return `<ol class="rank-list">${order.map((id, i) => `<li><b>${FINISH_NAME[i + 1]}</b> ${game.seats[id].name}</li>`).join('')}</ol>`;
+    return `<ol class="rank-list">${order.map((id, i) => `<li><b>${FINISH_NAME[i + 1]}</b> ${esc(game.seats[id].name)}</li>`).join('')}</ol>`;
   }
 
   sheet(inner, actions) {
     return `<div class="overlay"><div class="sheet">${inner}<div class="sheet-actions">${actions}</div></div></div>`;
+  }
+
+  settingsHtml() {
+    if (!this.settings) return '';
+    return `
+      <div class="overlay">
+        <div class="sheet">
+          <h2>设置</h2>
+          <p>三家电脑同一难度，下一手就生效。</p>
+          ${this.diffGrid()}
+          <div class="sheet-actions">
+            <button type="button" class="btn ghost" data-act="mute">${this.muted ? '打开声音' : '关闭声音'}</button>
+            <button type="button" class="btn play" data-act="close-settings">完成</button>
+          </div>
+        </div>
+      </div>`;
   }
 
   rulesHtml() {
@@ -575,12 +871,12 @@ class UI {
       <div class="overlay">
         <div class="sheet rules">
           <h2>怎么打</h2>
-          <p>你坐下方，对家是队友，上家和下家是对方。两副牌 108 张，每人 27 张。从 2 打到 A，先过 A 的一队获胜。</p>
+          <p>你坐南家，对家是队友，西是上家，东是下家。两副牌 108 张，每人 27 张。从 2 打到 A，先过 A 的一队获胜。</p>
           <h3>级牌和逢人配</h3>
           <p>每一局只打一个级数，就是上一局赢家升级后的级数（第一局打 2）。这个点数是级牌，单张、对子、三张、三带二和炸弹里，级牌只比王小。红桃级牌是逢人配，可以当成任意非王牌。</p>
           <h3>牌型</h3>
           <p>单张、对子、三张、三带二（三张带一对）、顺子（必须 5 张）、木板（三连对）、钢板（两连三张）、炸弹（4 张及以上同点）、同花顺、天王炸（四张王）。</p>
-          <p>顺子、木板、钢板按自然点数衔接，级牌回到原来的位置。A2345 最小，10JQKA 最大，不能绕回。木板可以 A23，钢板可以 A2，这里 A 当最小。三带二只比三张，不比对子。</p>
+          <p>顺子、木板、钢板按自然点数衔接，级牌回到原来的位置，不另算。A2345 最小，10JQKA 最大，不能绕回。木板可以 A23，钢板可以 A2，这里 A 当最小。三带二只比三张，不比对子。</p>
           <h3>大小</h3>
           <p>普通牌型必须同型更大。炸弹可以压任何非炸弹。张数多的炸弹更大；同张数比点数，级牌最大。同花顺大于四炸和五炸，小于六炸及以上；同样的同花顺比花色，黑桃 &gt; 红桃 &gt; 梅花 &gt; 方块。天王炸最大。</p>
           <h3>一轮和接风</h3>
@@ -590,16 +886,19 @@ class UI {
           <p>赢家：头游 + 二游升 3 级，头游 + 三游升 2 级，头游 + 末游升 1 级。级数到 A 为止。下一局打赢家当前的级数。</p>
           <p>新的一局发牌后进贡。末游把最大的一张交给头游（逢人配不交）。若是双下，三游和末游都交，较大的给头游，较小的给二游。收到贡牌的人还一张牌面 ≤10 的牌。还完由进贡给头游的那家先出。进贡方手里有两张大王则抗贡，改由头游先出。没有 ≤10 的牌时，还最小的非王牌。</p>
           <p>已经打到 A 的一队，这一局必须头游并且队友不是末游，才算过 A。如果只是头游 + 末游，停在 A 继续打。</p>
-          <h3>操作</h3>
-          <p>手牌点一下选中，再点取消。出牌、不出、提示、理牌。第一局由你先出。三家是启发式电脑：尽量出小牌，炸弹留着，队友的大牌一般不压。</p>
-          <div class="sheet-actions"><button type="button" class="btn hint" data-act="close-rules">知道了</button></div>
+          <h3>理牌和记牌</h3>
+          <p>理牌在点数、花色、牌型之间切换，规则条会留在牌桌上。选中手牌时，条上写出这种牌型怎么比。例如顺子固定 5 张，按牌面点数衔接，级牌不另算。</p>
+          <p>记牌器在任一家手牌少于 10 张时自动打开，也可以随时点「记牌」。它只显示四家剩余张数，以及还没打出的花色和点数，不亮别人的具体手牌。收起之后可以再打开。</p>
+          <h3>电脑难度</h3>
+          <p>开局选定轻松、均衡或精算，三家电脑同一档，设置里可以改。轻松合法跟牌、偏出小牌。均衡尽量出小牌型、留炸弹，队友的大牌一般不压。精算会记已经打出的公开牌，配合让牌和拦截，炸弹出手更稳，残局按手数取舍。</p>
+          <div class="sheet-actions"><button type="button" class="btn ghost" data-act="close-rules">知道了</button></div>
         </div>
       </div>`;
   }
 
   toastHtml() {
     if (!this.toastMsg) return '';
-    return `<div class="toast">${this.toastMsg}</div>`;
+    return `<div class="toast">${esc(this.toastMsg)}</div>`;
   }
 }
 

@@ -1,18 +1,20 @@
 import {
   FINISH_NAME,
+  RANKS,
   advanceLevel,
   cardText,
   createDeck,
   evaluateSelection,
   isJoker,
   isReturnable,
+  isWild,
   pickReturnCard,
   planTribute,
   shuffle,
   typeLabel,
   upgradeSteps,
   isBombType,
-} from './engine.js?v=2';
+} from './engine.js?v=3';
 
 const NAMES = ['你', '下家', '对家', '上家'];
 const STAMPS = ['我', '下', '对', '上'];
@@ -30,12 +32,63 @@ function makeSeat(id, hand) {
   };
 }
 
+export function unplayedPool(hands, level) {
+  const suits = { S: 0, H: 0, C: 0, D: 0 };
+  const ranks = Object.fromEntries(RANKS.map((rank) => [rank, 0]));
+  let sj = 0;
+  let bj = 0;
+  let wild = 0;
+  let levelCount = 0;
+  for (const hand of hands) {
+    for (const card of hand) {
+      if (card.rank === 'SJ') sj += 1;
+      else if (card.rank === 'BJ') bj += 1;
+      else {
+        suits[card.suit] += 1;
+        ranks[card.rank] += 1;
+        if (card.rank === level) levelCount += 1;
+        if (isWild(card, level)) wild += 1;
+      }
+    }
+  }
+  const seatCounts = hands.map((hand) => hand.length);
+  return {
+    suits,
+    ranks,
+    sj,
+    bj,
+    wild,
+    levelCount,
+    seatCounts,
+    total: seatCounts.reduce((sum, n) => sum + n, 0),
+  };
+}
+
 export class Match {
   constructor() {
+    this.difficulty = 'balanced';
+    this.known = [];
     this.reset();
   }
 
+  setDifficulty(level) {
+    if (level === 'easy' || level === 'balanced' || level === 'sharp') this.difficulty = level;
+  }
+
+  remember(card, place) {
+    if (!card) return;
+    this.known = (this.known || []).filter((item) => item.id !== card.id);
+    this.known.push({
+      id: card.id,
+      rank: card.rank,
+      suit: card.suit,
+      deck: card.deck,
+      place,
+    });
+  }
+
   reset() {
+    this.known = [];
     this.teamLevel = ['2', '2'];
     this.level = '2';
     this.levelOwner = null;
@@ -80,6 +133,7 @@ export class Match {
     const deck = shuffle(createDeck());
     this.seats = [0, 1, 2, 3].map((id) => makeSeat(id, deck.slice(id * 27, id * 27 + 27)));
     this.finishOrder = [];
+    this.known = [];
   }
 
   beginPlay(leader) {
@@ -137,6 +191,7 @@ export class Match {
     if (!ev.ok) return ev;
     const ids = new Set(chosen.map((c) => c.id));
     this.seats[seat].hand = hand.filter((c) => !ids.has(c.id));
+    for (const card of chosen) this.remember(card, 'table');
     this.seats[seat].shown = { cards: ev.combo.cards, combo: ev.combo, pass: false };
     this.trick.combo = ev.combo;
     this.trick.winner = seat;
@@ -277,6 +332,7 @@ export class Match {
   applyTransfer(from, to, card) {
     this.seats[from].hand = this.seats[from].hand.filter((c) => c.id !== card.id);
     this.seats[to].hand.push(card);
+    this.remember(card, to);
   }
 
   pumpTribute() {
@@ -353,9 +409,15 @@ export class Match {
     const foes = [(seat + 1) % 4, (seat + 3) % 4]
       .map((id) => this.seats[id].hand.length)
       .filter((n) => n > 0);
+    const known = this.known || [];
     return {
+      difficulty: this.difficulty || 'balanced',
       partnerWinning: this.trick?.winner === partner,
       opponentMin: foes.length ? Math.min(...foes) : 99,
+      partnerLen: this.seats[partner].hand.length,
+      myLen: this.seats[seat].hand.length,
+      played: known.filter((card) => card.place === 'table'),
+      knownElsewhere: known.filter((card) => card.place !== 'table' && card.place !== seat),
     };
   }
 
@@ -369,6 +431,7 @@ export class Match {
     this.tribute = null;
     this.finishOrder = [];
     this.seats = [0, 1, 2, 3].map((id) => makeSeat(id, hands[id].slice()));
+    this.known = [];
     this.phase = 'play';
     this.beginTrick(turn);
   }
