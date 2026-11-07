@@ -1,5 +1,5 @@
-import { Match } from './controller.js?v=3';
-import { mount } from './ui.js?v=3';
+import { Match } from './controller.js?v=4';
+import { mount } from './ui.js?v=4';
 
 const app = document.querySelector('#app');
 const game = new Match();

@@ -17,10 +17,10 @@ import {
   planTribute,
   powerValue,
   upgradeSteps,
-} from '../js/engine.js?v=3';
-import { chooseMove } from '../js/ai.js?v=3';
-import { Match, unplayedPool } from '../js/controller.js?v=3';
-import { cardMetrics, handLayout } from '../js/ui.js?v=3';
+} from '../js/engine.js?v=4';
+import { chooseMove } from '../js/ai.js?v=4';
+import { Match, unplayedPool } from '../js/controller.js?v=4';
+import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=4';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -423,6 +423,23 @@ check('phone hand step', () => {
   assert.ok(layout.step > 11.5 && layout.step < 12.5, layout.step);
   assert.ok(layout.offset + layout.total <= 391);
   assert.equal(layout.cw, 60);
+});
+
+check('two row hand splits 27 into 14 and 13', () => {
+  const phone = twoRowLayout({ width: 390, height: 844, n: 27 });
+  const land = twoRowLayout({ width: 844, height: 390, n: 27 });
+  const desk = twoRowLayout({ width: 1280, height: 800, n: 27 });
+  const after = twoRowLayout({ width: 1280, height: 800, n: 26 });
+  const few = twoRowLayout({ width: 390, height: 844, n: 10 });
+  for (const layout of [phone, land, desk]) {
+    assert.equal(layout.top, 14);
+    assert.equal(layout.bottom, 13);
+    assert.ok(layout.cw * 14 + layout.gap * 13 <= (layout === desk ? 1280 : layout === land ? 844 : 390));
+  }
+  assert.equal(after.top, 13);
+  assert.equal(after.bottom, 13);
+  assert.equal(few.bottom, 0);
+  assert.equal(few.rows, 1);
 });
 
 check('card sizes', () => {

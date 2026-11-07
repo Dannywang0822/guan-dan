@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=3';
+import { unplayedPool } from './controller.js?v=4';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -12,8 +12,8 @@ import {
   sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=3';
-import { chooseMove, listSuggestions } from './ai.js?v=3';
+} from './engine.js?v=4';
+import { chooseMove, listSuggestions } from './ai.js?v=4';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -59,6 +59,35 @@ export function cardMetrics(width) {
   if (width >= 1100) return { hand: 92, play: 58 };
   if (width >= 800) return { hand: 80, play: 50 };
   return { hand: 66, play: 42 };
+}
+
+export function splitHandRows(n) {
+  if (n <= 14) return [n, 0];
+  const top = Math.ceil(n / 2);
+  return [top, n - top];
+}
+
+export function twoRowLayout({ width, height = 800, n = 0, extra = 0 }) {
+  const [top, bottom] = splitHandRows(Math.max(0, n));
+  const longest = Math.max(top, bottom, 1);
+  const rows = bottom > 0 ? 2 : 1;
+  const short = height > 0 && height < 520;
+  const narrow = width < 800;
+  const gap = short || narrow ? 2 : 5;
+  const rowGap = short ? 4 : 6;
+  const sidePad = width >= 1100 ? 24 : 10;
+  const availW = Math.max(80, width - sidePad);
+  const header = short ? 52 : (narrow ? 96 : 54);
+  const rule = short ? 42 : 66;
+  const buttons = short ? 48 : 56;
+  const matMin = short ? 100 : (width >= 1100 ? 168 : 132);
+  const spare = Math.max(rows * 28, height - header - rule - buttons - matMin - 10);
+  const chByH = Math.floor((spare - (rows - 1) * rowGap) / rows);
+  const cwByW = Math.floor((availW - Math.max(0, longest - 1) * gap - extra) / longest);
+  const cwByH = Math.floor(chByH * 0.7);
+  const cw = Math.max(16, Math.min(cwByW, cwByH));
+  const ch = Math.round(cw / 0.7);
+  return { top, bottom, cw, ch, gap, rowGap, rows };
 }
 
 export function handLayout(width, n, cardW = 60, extra = 0) {
@@ -285,7 +314,7 @@ class UI {
       return;
     }
     if (name === 'counter-open' || name === 'counter-toggle') {
-      const open = this.counterVisible() && (this.isDesktop() || this.counterSheet);
+      const open = this.counterVisible() && this.counterSheet;
       if (name === 'counter-toggle' && open) {
         this.counterPin = false;
         this.counterSheet = false;
@@ -453,6 +482,30 @@ class UI {
     this.counterSheet = false;
   }
 
+  tightenHand() {
+    const root = this.app;
+    const rows = root.querySelector('.hand-rows');
+    const buttons = root.querySelector('.btns');
+    if (!rows || !buttons) return;
+    for (let pass = 0; pass < 8; pass++) {
+      const cards = [...rows.querySelectorAll('.hc')];
+      if (!cards.length) return;
+      const cw = cards[0].getBoundingClientRect().width;
+      const tooWide = root.scrollWidth > root.clientWidth + 1
+        || rows.scrollWidth > rows.clientWidth + 1
+        || [...rows.querySelectorAll('.hand-row')].some((row) => row.scrollWidth > row.clientWidth + 1);
+      const tooTall = buttons.getBoundingClientRect().bottom > root.clientHeight + 1;
+      if (!tooWide && !tooTall) return;
+      const next = Math.max(16, Math.floor(cw - 1));
+      if (next >= cw) return;
+      const ch = Math.round(next / 0.7);
+      for (const card of cards) {
+        card.style.width = `${next}px`;
+        card.style.height = `${ch}px`;
+      }
+    }
+  }
+
   counterVisible() {
     if (this.game.phase === 'start') return false;
     if (this.counterPin === true) return true;
@@ -463,23 +516,8 @@ class UI {
   paint({ live = false } = {}) {
     this.syncHand();
     this.syncSelection();
-    const previous = this.app.querySelector('.hand-scroll');
-    if (previous) this.handScroll = previous.scrollLeft;
     this.app.innerHTML = this.html();
-    const scroller = this.app.querySelector('.hand-scroll');
-    if (scroller) {
-      scroller.scrollLeft = this.handScroll || 0;
-      const picked = scroller.querySelector('.hc.selected');
-      if (picked) {
-        const left = picked.offsetLeft;
-        const right = left + picked.offsetWidth;
-        const view = scroller.scrollLeft + scroller.clientWidth;
-        if (left < scroller.scrollLeft + 8 || right > view - 8) {
-          scroller.scrollLeft = Math.max(0, left - 12);
-          this.handScroll = scroller.scrollLeft;
-        }
-      }
-    }
+    this.tightenHand();
     if (live) {
       this.playSfx();
       this.queueAI();
@@ -580,42 +618,27 @@ class UI {
     const game = this.game;
     const width = this.width();
     const metrics = cardMetrics(width);
-    const desktop = width >= 1100;
     const mine = game.turn === 0 && game.phase === 'play';
     const items = orderedHand(game.seats[0].hand, game.level, this.arrange);
-    const gapCount = items.filter((item) => item.gap).length;
-    const gapW = gapCount && width < 800 ? 6 : 10;
-    const handAvail = desktop ? Math.max(360, width - 300) : width;
-    const layout = handLayout(handAvail, Math.max(1, items.length), metrics.hand, gapCount * gapW);
-    const minStep = width < 800 ? 24 : 20;
-    if (items.length > 1 && layout.step < minStep) {
-      layout.step = minStep;
-      layout.total = layout.cw + (items.length - 1) * layout.step + gapCount * gapW;
-      layout.offset = 12;
-    }
-    const innerW = Math.max(handAvail, Math.ceil(layout.offset + layout.total + 12));
-    const sideMax = desktop ? 260 : Math.max(112, Math.floor((width - 110) / 2));
-    const wideMax = desktop ? 560 : width - 36;
+    const height = this.app.clientHeight || window.innerHeight || 800;
+    const draft = twoRowLayout({ width, height, n: items.length });
+    const topGaps = items.slice(0, draft.top).filter((item) => item.gap).length;
+    const bottomGaps = items.slice(draft.top).filter((item) => item.gap).length;
+    const layout = twoRowLayout({
+      width,
+      height,
+      n: items.length,
+      extra: Math.max(topGaps, bottomGaps) * 8,
+    });
+    const sideMax = Math.max(96, Math.floor((width - 28) / 3) - 8);
+    const wideMax = Math.max(120, Math.floor(width * 0.34));
+    const playW = height < 520 ? Math.min(metrics.play, 32) : metrics.play;
     const wild = svgCard({ rank: game.level, suit: 'H' }, game.level, { width: 26 });
     const returning = game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return';
-    let x = layout.offset;
-    const hand = items.map((item, i) => {
-      if (item.gap) x += gapW;
-      const selected = this.selected.has(item.card.id);
-      const dim = returning && game.seats[0].hand.some(isReturnable) && !isReturnable(item.card);
-      const top = selected ? 0 : 14;
-      const html = `
-        <button type="button" class="hc${selected ? ' selected' : ''}${dim ? ' dim' : ''}" data-cid="${item.card.id}"
-          style="left:${x}px;top:${top}px;width:${layout.cw}px;z-index:${selected ? 80 : i + 1}"
-          aria-label="${esc(cardText(item.card))}" aria-pressed="${selected}">
-          ${svgCard(item.card, game.level, { selected, width: layout.cw })}
-        </button>`;
-      x += layout.step;
-      return html;
-    }).join('');
+    const hand = this.handRowsHtml(items, layout, returning);
     const owner = game.levelOwner == null ? '' : game.levelOwner === 0 ? ' · 我方' : ' · 对方';
     const short = game.seats.filter((seat) => seat.hand.length < 10).map((seat) => seat.name);
-    const banner = !desktop && this.counterVisible() && !this.counterSheet && short.length
+    const banner = this.counterVisible() && !this.counterSheet && short.length
       ? `<button type="button" class="counter-banner" data-act="counter-open">${esc(short.join('、'))}手牌 &lt; 10，记牌器已开启</button>`
       : '';
     const counterOpen = this.counterVisible();
@@ -635,30 +658,44 @@ class UI {
       <div class="stage">
         ${washSvg()}
         <div class="mat">
-          ${this.seatBlock(2, metrics.play, wideMax, 'north')}
-          <div class="equator">
-            ${this.seatBlock(3, metrics.play, sideMax, 'west')}
-            ${ensoSvg()}
-            ${this.seatBlock(1, metrics.play, sideMax, 'east')}
+          <div class="plays">
+            ${this.seatBlock(3, playW, sideMax, 'west')}
+            <div class="plays-mid">
+              ${this.seatBlock(2, playW, wideMax, 'north')}
+              ${this.seatBlock(0, playW, wideMax, 'south')}
+            </div>
+            ${this.seatBlock(1, playW, sideMax, 'east')}
           </div>
           <p class="status">${esc(game.message || '')}</p>
         </div>
         ${this.tributeBar()}
         ${this.ruleBarHtml()}
         <div class="hand-zone">
-          ${this.seatBlock(0, metrics.play, wideMax, 'mine')}
-          <div class="hand-scroll${innerW > handAvail + 8 ? ' can-pan' : ''}">
-            <div class="hand" style="width:${innerW}px;height:${layout.ch + 18}px">
-              ${items.length ? hand : '<p class="empty-hand">牌已出完</p>'}
-            </div>
-          </div>
+          <div class="hand-rows" style="gap:${layout.rowGap}px">${hand}</div>
         </div>
         ${banner}
-        <aside class="dock">
-          ${desktop && counterOpen ? this.counterHtml() : ''}
-          ${this.buttonsHtml(mine)}
-        </aside>
+        ${this.buttonsHtml(mine)}
       </div>`;
+  }
+
+  handRowsHtml(items, layout, returning) {
+    if (!items.length) return '<p class="empty-hand">牌已出完</p>';
+    const game = this.game;
+    const slices = [items.slice(0, layout.top), items.slice(layout.top)].filter((row) => row.length);
+    return slices.map((row) => {
+      const cards = row.map((item) => {
+        const selected = this.selected.has(item.card.id);
+        const dim = returning && game.seats[0].hand.some(isReturnable) && !isReturnable(item.card);
+        const gap = item.gap ? `margin-left:${layout.gap + 8}px;` : '';
+        return `
+          <button type="button" class="hc${selected ? ' selected' : ''}${dim ? ' dim' : ''}" data-cid="${item.card.id}"
+            style="width:${layout.cw}px;height:${layout.ch}px;${gap}"
+            aria-label="${esc(cardText(item.card))}" aria-pressed="${selected}">
+            ${svgCard(item.card, game.level, { selected, width: layout.cw })}
+          </button>`;
+      }).join('');
+      return `<div class="hand-row" data-count="${row.length}" style="gap:${layout.gap}px">${cards}</div>`;
+    }).join('');
   }
 
   seatBlock(id, cardW, maxW, extra) {
@@ -773,7 +810,7 @@ class UI {
   }
 
   counterSheetHtml() {
-    if (this.isDesktop() || !this.counterVisible() || !this.counterSheet) return '';
+    if (!this.counterVisible() || !this.counterSheet) return '';
     return `<div class="overlay counter-overlay"><div class="sheet counter-sheet">${this.counterHtml()}</div></div>`;
   }
 
