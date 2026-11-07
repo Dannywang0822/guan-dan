@@ -17,10 +17,10 @@ import {
   planTribute,
   powerValue,
   upgradeSteps,
-} from '../js/engine.js?v=4';
-import { chooseMove } from '../js/ai.js?v=4';
-import { Match, unplayedPool } from '../js/controller.js?v=4';
-import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=4';
+} from '../js/engine.js?v=5';
+import { chooseMove } from '../js/ai.js?v=5';
+import { Match, unplayedPool } from '../js/controller.js?v=5';
+import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=5';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -440,6 +440,11 @@ check('two row hand splits 27 into 14 and 13', () => {
   assert.equal(after.bottom, 13);
   assert.equal(few.bottom, 0);
   assert.equal(few.rows, 1);
+  const lone = twoRowLayout({ width: 1280, height: 800, n: 1 });
+  const lonePhone = twoRowLayout({ width: 390, height: 844, n: 1 });
+  assert.ok(lone.ch <= 140, lone.ch);
+  assert.ok(lonePhone.ch <= 110, lonePhone.ch);
+  assert.equal(desk.top, 14);
 });
 
 check('card sizes', () => {

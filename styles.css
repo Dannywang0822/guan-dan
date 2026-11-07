@@ -120,7 +120,7 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
 
 .mat {
   flex: 1 1 auto;
-  min-height: 88px;
+  min-height: 156px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -543,6 +543,7 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
 }
 
 @media (max-height: 520px) {
+  .mat { min-height: 108px; }
   .top { min-height: 40px; padding-top: 2px; padding-bottom: 2px; }
   .text-btn { min-height: 32px; }
   .rulebar { margin-top: 2px; margin-bottom: 2px; padding: 4px 6px; }

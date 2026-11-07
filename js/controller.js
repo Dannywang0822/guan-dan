@@ -14,7 +14,7 @@ import {
   typeLabel,
   upgradeSteps,
   isBombType,
-} from './engine.js?v=4';
+} from './engine.js?v=5';
 
 const NAMES = ['你', '下家', '对家', '上家'];
 const STAMPS = ['我', '下', '对', '上'];

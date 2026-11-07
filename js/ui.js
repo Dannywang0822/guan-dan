@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=4';
+import { unplayedPool } from './controller.js?v=5';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -12,8 +12,8 @@ import {
   sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=4';
-import { chooseMove, listSuggestions } from './ai.js?v=4';
+} from './engine.js?v=5';
+import { chooseMove, listSuggestions } from './ai.js?v=5';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -85,7 +85,9 @@ export function twoRowLayout({ width, height = 800, n = 0, extra = 0 }) {
   const chByH = Math.floor((spare - (rows - 1) * rowGap) / rows);
   const cwByW = Math.floor((availW - Math.max(0, longest - 1) * gap - extra) / longest);
   const cwByH = Math.floor(chByH * 0.7);
-  const cw = Math.max(16, Math.min(cwByW, cwByH));
+  // 张数少时不能把剩余高度全给手牌，否则出牌区会被挤到最小高度后裁掉。
+  const maxCw = width >= 1100 ? 96 : short ? 58 : 72;
+  const cw = Math.max(16, Math.min(cwByW, cwByH, maxCw));
   const ch = Math.round(cw / 0.7);
   return { top, bottom, cw, ch, gap, rowGap, rows };
 }
@@ -632,7 +634,7 @@ class UI {
     });
     const sideMax = Math.max(96, Math.floor((width - 28) / 3) - 8);
     const wideMax = Math.max(120, Math.floor(width * 0.34));
-    const playW = height < 520 ? Math.min(metrics.play, 32) : metrics.play;
+    const playW = height < 520 ? Math.min(metrics.play, 24) : metrics.play;
     const wild = svgCard({ rank: game.level, suit: 'H' }, game.level, { width: 26 });
     const returning = game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return';
     const hand = this.handRowsHtml(items, layout, returning);
