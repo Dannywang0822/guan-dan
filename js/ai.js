@@ -9,7 +9,7 @@ import {
   isWild,
   powerValue,
   wildCount,
-} from './engine.js?v=5';
+} from './engine.js?v=6';
 
 function legalMoves(hand, level, current) {
   const out = [];
