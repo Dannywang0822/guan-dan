@@ -17,10 +17,18 @@ import {
   planTribute,
   powerValue,
   upgradeSteps,
-} from '../js/engine.js?v=5';
-import { chooseMove } from '../js/ai.js?v=5';
-import { Match, unplayedPool } from '../js/controller.js?v=5';
-import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=5';
+} from '../js/engine.js?v=6';
+import { chooseMove } from '../js/ai.js?v=6';
+import { Match, unplayedPool } from '../js/controller.js?v=6';
+import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=6';
+import {
+  composeVerdict,
+  fanHitIndex,
+  isPortraitPhone,
+  packedMetrics,
+  portraitFanLayout,
+  zoomCardWidth,
+} from '../js/portrait.js?v=6';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -546,6 +554,141 @@ check('easy and sharp stay legal', () => {
       assert.equal(res.ok, true, `${difficulty} ${res.reason}`);
     }
   }
+});
+
+check('portrait phone gate leaves landscape on two rows', () => {
+  assert.equal(isPortraitPhone(390, 844), true);
+  assert.equal(isPortraitPhone(600, 800), true);
+  assert.equal(isPortraitPhone(844, 390), false);
+  assert.equal(isPortraitPhone(667, 375), false);
+  assert.equal(isPortraitPhone(1280, 800), false);
+  assert.equal(isPortraitPhone(601, 900), false);
+  const wide = twoRowLayout({ width: 844, height: 390, n: 27 });
+  assert.equal(wide.top, 14);
+  assert.equal(wide.bottom, 13);
+});
+
+check('portrait fan fits 27 cards without scroll', () => {
+  const fan = portraitFanLayout(390, 27);
+  assert.ok(fan.cw >= 50 && fan.cw <= 56, fan.cw);
+  assert.ok(fan.ch >= 72 && fan.ch <= 82, fan.ch);
+  assert.ok(fan.step >= 11 && fan.step < fan.cw, fan.step);
+  assert.ok(fan.offset + fan.total <= fan.avail + 0.01, fan);
+  assert.ok((fan.step / fan.cw) * 140 >= 21, '10 peek');
+  const narrow = portraitFanLayout(320, 27);
+  assert.ok(narrow.offset + narrow.total <= narrow.avail + 0.01);
+  assert.ok((narrow.step / narrow.cw) * 140 >= 21);
+  const late = portraitFanLayout(390, 6);
+  assert.ok(late.step > fan.step);
+  assert.equal(late.cw, 54);
+  const one = zoomCardWidth(390, 1);
+  const many = zoomCardWidth(390, 8);
+  assert.equal(one.cw, 78);
+  assert.ok(many.cw < one.cw);
+  assert.ok(many.cw * 8 + many.gap * 7 <= 390);
+  for (const [maxW, n, target] of [[360, 8, 46], [100, 6, 18], [390, 1, 46]]) {
+    const row = packedMetrics(maxW, n, target);
+    assert.ok(row.total <= row.room + 0.01, row);
+  }
+});
+
+check('fan hit prefers the visible strip and magnet', () => {
+  const fan = portraitFanLayout(390, 27);
+  const { step, offset, cw, magnet } = fan;
+  assert.equal(fanHitIndex(offset + 1, 27, step, offset, cw, magnet), 0);
+  const boundary = offset + step;
+  assert.equal(fanHitIndex(boundary + 1, 27, step, offset, cw, magnet), 1);
+  assert.equal(fanHitIndex(boundary - 1, 27, step, offset, cw, magnet), 0);
+  assert.equal(fanHitIndex(offset - 2, 27, step, offset, cw, magnet), 0);
+  const lastLeft = offset + 26 * step;
+  assert.equal(fanHitIndex(lastLeft + cw - 2, 27, step, offset, cw, magnet), 26);
+  assert.equal(fanHitIndex(boundary + 1, 27, step, offset, cw, magnet, [0], { y: 40, cardTop: 18 }), 1);
+  assert.equal(fanHitIndex(boundary + 1, 27, step, offset, cw, magnet, [0], { y: 4, cardTop: 18 }), 0);
+  assert.equal(fanHitIndex(-40, 27, step, offset, cw, magnet), -1);
+});
+
+check('compose straight gap and missing rank', () => {
+  const gap = take(deck, [['5', 'S'], ['6', 'H'], ['7', 'C'], ['8', 'D'], ['10', 'S']]);
+  const broken = composeVerdict(gap, '9', 'straight', null);
+  assert.equal(broken.canPlay, false);
+  assert.equal(broken.state, 'bad');
+  assert.ok(broken.text.includes('不是顺子'));
+  assert.ok(broken.text.includes('5-6-7-8-10'));
+  assert.ok(broken.text.includes('中间断了'), broken.text);
+  const short = take(deck, [['5', 'C'], ['6', 'D'], ['7', 'S'], ['8', 'C']]);
+  const miss = composeVerdict(short, '9', 'straight', null);
+  assert.equal(miss.canPlay, false);
+  assert.ok(miss.text.includes('顺子至少 5 张连续点数'), miss.text);
+  assert.ok(miss.text.includes('缺 9'), miss.text);
+  const ok = take(deck, [['5', 'D'], ['6', 'S'], ['7', 'H'], ['8', 'S'], ['9', 'C']]);
+  const good = composeVerdict(ok, '2', 'straight', null);
+  assert.equal(good.canPlay, true);
+  assert.equal(good.state, 'ok');
+  assert.ok(good.text.includes('顺子 5-9'), good.text);
+  assert.ok(good.text.includes('正确，可以出牌'), good.text);
+});
+
+check('compose types, wilds and must beat', () => {
+  const pair = take(deck, [['4', 'S'], ['4', 'C']]);
+  const ok = composeVerdict(pair, '2', 'pair', null);
+  assert.equal(ok.canPlay, true);
+  assert.ok(ok.text.includes('对子 4'), ok.text);
+  const bigger = identify(take(deck, [['8', 'S'], ['8', 'D']]), '2')[0];
+  const lose = composeVerdict(pair, '2', 'pair', bigger);
+  assert.equal(lose.canPlay, false);
+  assert.equal(lose.state, 'warn');
+  assert.ok(lose.text.includes('压不过'), lose.text);
+  const mixed = composeVerdict(pair, '2', 'straight', null);
+  assert.equal(mixed.canPlay, false);
+  assert.ok(mixed.text.includes('不是顺子'), mixed.text);
+  const trips = take(deck, [['K', 'S'], ['K', 'H'], ['K', 'C']]);
+  assert.equal(composeVerdict(trips, '2', 'triple', null).canPlay, true);
+  const full = take(deck, [['Q', 'S'], ['Q', 'H'], ['Q', 'C'], ['3', 'S'], ['3', 'D']]);
+  const house = composeVerdict(full, '2', 'fullhouse', null);
+  assert.equal(house.canPlay, true);
+  assert.ok(house.text.includes('三带二'), house.text);
+  const bomb = take(deck, [['9', 'S', 1], ['9', 'H', 1], ['9', 'C', 1], ['9', 'D', 1]]);
+  assert.equal(composeVerdict(bomb, '2', 'bomb', null).canPlay, true);
+  const tube = take(deck, [['5', 'S', 1], ['5', 'C', 1], ['6', 'S', 1], ['6', 'C', 1], ['7', 'S', 1], ['7', 'C', 1]]);
+  const tubeHit = composeVerdict(tube, '9', 'tube', null);
+  assert.equal(tubeHit.canPlay, true, tubeHit.text);
+  assert.ok(tubeHit.text.includes('连对'), tubeHit.text);
+  const tubeGap = take(deck, [['5', 'D', 1], ['5', 'H', 1], ['6', 'D', 1], ['6', 'H', 1], ['8', 'S', 1], ['8', 'C', 1]]);
+  const tubeBad = composeVerdict(tubeGap, '9', 'tube', null);
+  assert.equal(tubeBad.canPlay, false);
+  assert.ok(tubeBad.text.includes('中间断了'), tubeBad.text);
+  const plate = take(deck, [['8', 'S'], ['8', 'H'], ['8', 'C'], ['9', 'S'], ['9', 'H'], ['9', 'C']]);
+  const plateHit = composeVerdict(plate, '2', 'plate', null);
+  assert.equal(plateHit.canPlay, true, plateHit.text);
+  assert.ok(plateHit.text.includes('钢板'), plateHit.text);
+  const flush = take(deck, [['3', 'S'], ['4', 'S'], ['5', 'S'], ['6', 'S'], ['7', 'S']]);
+  const flushHit = composeVerdict(flush, '9', 'straightflush', null);
+  assert.equal(flushHit.canPlay, true, flushHit.text);
+  assert.ok(flushHit.text.includes('同花顺'), flushHit.text);
+  const notFlush = composeVerdict(flush, '9', 'straight', null);
+  assert.equal(notFlush.canPlay, false);
+  assert.ok(notFlush.text.includes('同花顺'), notFlush.text);
+  const wildStraight = take(deck, [['4', 'D'], ['5', 'D'], ['6', 'C'], ['7', 'D'], ['2', 'H', 1]]);
+  const wild = composeVerdict(wildStraight, '2', 'straight', null);
+  assert.equal(wild.canPlay, true, wild.text);
+  assert.equal(composeVerdict([], '2', 'straight', null).state, 'empty');
+  const auto = composeVerdict(pair, '2', null, null);
+  assert.equal(auto.canPlay, true);
+  assert.ok(auto.text.includes('对子'), auto.text);
+});
+
+check('fan ten stays in the left peek', () => {
+  const ten = cardSVG('10', 'H', { fan: true, width: 54, level: true });
+  assert.ok(ten.includes('textLength="18"'), ten);
+  assert.ok(ten.includes('级'));
+  assert.ok(ten.includes('translate(13 74)'));
+  assert.equal(ten.includes('translate(118'), false);
+  const wild = cardSVG('2', 'H', { fan: true, wild: true, width: 54 });
+  assert.ok(wild.includes('配'));
+  assert.ok(wild.includes('translate(13 74)'));
+  const plain = cardSVG('10', 'S', { width: 54 });
+  assert.ok(plain.includes('textLength="26"'));
+  assert.ok(plain.includes('translate(118 78)') === false || plain.includes('级') === false);
 });
 
 if (failed) {

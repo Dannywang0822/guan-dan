@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=5';
+import { unplayedPool } from './controller.js?v=6';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -12,8 +12,18 @@ import {
   sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=5';
-import { chooseMove, listSuggestions } from './ai.js?v=5';
+} from './engine.js?v=6';
+import { chooseMove, listSuggestions } from './ai.js?v=6';
+import {
+  COMPOSE_TYPES,
+  chipTypeForCombo,
+  composeVerdict,
+  fanHitIndex,
+  isPortraitPhone,
+  packedMetrics,
+  portraitFanLayout,
+  zoomCardWidth,
+} from './portrait.js?v=6';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -146,6 +156,7 @@ function svgCard(card, level, opts = {}) {
     wild,
     selected: !!opts.selected,
     width: opts.width,
+    fan: !!opts.fan,
   });
 }
 
@@ -160,6 +171,16 @@ function faceRow(cards, level, width, maxW) {
   return `<div class="mini-row">${cards.map((card, i) => `
     <div class="mini" style="width:${width}px;margin-left:${i ? step - width : 0}px;z-index:${i}">
       ${svgCard(card, level, { width })}
+    </div>`).join('')}</div>`;
+}
+
+function packedRow(cards, level, maxW, targetW) {
+  if (!cards?.length) return '';
+  const n = cards.length;
+  const { cw, step } = packedMetrics(maxW, n, targetW);
+  return `<div class="mini-row packed">${cards.map((card, i) => `
+    <div class="mini" style="width:${cw}px;margin-left:${i ? step - cw : 0}px;z-index:${i}">
+      ${svgCard(card, level, { width: cw })}
     </div>`).join('')}</div>`;
 }
 
@@ -205,8 +226,12 @@ function ensoSvg() {
 export function mount(app, game) {
   const ui = new UI(app, game);
   app.addEventListener('click', (event) => ui.onClick(event));
-  window.addEventListener('resize', () => ui.paint());
-  window.addEventListener('keydown', (event) => ui.onKey(event));
+  const relayout = () => ui.paint();
+  window.addEventListener('resize', relayout);
+  window.addEventListener('orientationchange', relayout);
+  const mq = window.matchMedia?.('(orientation: portrait) and (max-width: 600px)');
+  if (mq?.addEventListener) mq.addEventListener('change', relayout);
+  else if (mq?.addListener) mq.addListener(relayout);
   ui.paint({ live: true });
   return ui;
 }
@@ -229,6 +254,8 @@ class UI {
     this.counterPin = null;
     this.counterSheet = false;
     this.seenHand = null;
+    this.composeType = null;
+    this.ruleOpen = false;
     this.difficulty = loadDifficulty();
     game.setDifficulty(this.difficulty);
   }
@@ -241,6 +268,12 @@ class UI {
     return this.width() >= 1100;
   }
 
+  portrait() {
+    const width = this.width();
+    const height = this.app.clientHeight || window.innerHeight || 0;
+    return isPortraitPhone(width, height);
+  }
+
   onClick(event) {
     const act = event.target.closest('[data-act]');
     if (act) {
@@ -248,8 +281,35 @@ class UI {
       this.action(act.dataset.act);
       return;
     }
+    const fan = event.target.closest('.fan-zone');
+    if (fan) {
+      const id = this.fanPick(event, fan);
+      if (id != null) this.onCard(id);
+      return;
+    }
     const card = event.target.closest('[data-cid]');
     if (card) this.onCard(Number(card.dataset.cid));
+  }
+
+  fanPick(event, fan) {
+    const row = fan.querySelector('.fan-row');
+    if (!row) return null;
+    const rect = row.getBoundingClientRect();
+    const selected = [...row.querySelectorAll('.fc.selected')].map((node) => Number(node.dataset.index));
+    const ch = Number(row.dataset.ch);
+    const index = fanHitIndex(
+      event.clientX - rect.left,
+      Number(row.dataset.n),
+      Number(row.dataset.step),
+      Number(row.dataset.offset),
+      Number(row.dataset.cw),
+      Number(row.dataset.magnet),
+      selected,
+      { y: event.clientY - rect.top, cardTop: rect.height - ch },
+    );
+    if (index < 0) return null;
+    const ids = (row.dataset.ids || '').split(',').map(Number);
+    return Number.isFinite(ids[index]) ? ids[index] : null;
   }
 
   onKey(event) {
@@ -331,6 +391,7 @@ class UI {
       this.selected.clear();
       this.hintIndex = -1;
       this.selKey = '';
+      this.composeType = null;
       game.setDifficulty(this.difficulty);
       game.startMatch();
       this.paint({ live: true });
@@ -344,6 +405,17 @@ class UI {
     if (name.startsWith('mode-')) {
       const mode = name.slice(5);
       if (ARRANGE[mode]) this.arrange = mode;
+      this.paint();
+      return;
+    }
+    if (name.startsWith('type-')) {
+      const type = name.slice(5);
+      if (COMPOSE_TYPES.some(([id]) => id === type)) this.composeType = type;
+      this.paint();
+      return;
+    }
+    if (name === 'rule-toggle') {
+      this.ruleOpen = !this.ruleOpen;
       this.paint();
       return;
     }
@@ -422,6 +494,8 @@ class UI {
     this.hintIndex = (this.hintIndex + 1) % list.length;
     const move = list[this.hintIndex];
     this.selected = new Set(move.cards.map((c) => c.id));
+    const chip = chipTypeForCombo(move);
+    if (chip) this.composeType = chip;
     this.paint();
   }
 
@@ -470,6 +544,7 @@ class UI {
     this.selKey = key;
     this.selected.clear();
     this.hintIndex = -1;
+    this.composeType = null;
     if (game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return') {
       const card = pickReturnCard(game.seats[0].hand);
       if (card) this.selected.add(card.id);
@@ -518,12 +593,44 @@ class UI {
   paint({ live = false } = {}) {
     this.syncHand();
     this.syncSelection();
+    const portrait = this.portrait();
+    if (portrait && this.counterPin !== false && this.counterVisible()) this.counterSheet = true;
+    this.app.classList.toggle('portrait', portrait);
     this.app.innerHTML = this.html();
-    this.tightenHand();
+    if (!portrait) this.tightenHand();
+    this.bindSheet();
     if (live) {
       this.playSfx();
       this.queueAI();
     }
+  }
+
+  bindSheet() {
+    const sheet = this.app.querySelector('.p-sheet');
+    const handle = sheet?.querySelector('.sheet-handle');
+    if (!sheet || !handle) return;
+    let startY = 0;
+    let dy = 0;
+    let dragging = false;
+    handle.addEventListener('pointerdown', (event) => {
+      dragging = true;
+      startY = event.clientY;
+      dy = 0;
+      handle.setPointerCapture?.(event.pointerId);
+    });
+    handle.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      dy = event.clientY - startY;
+      sheet.style.transform = dy > 0 ? `translateY(${Math.min(dy, 180)}px)` : '';
+    });
+    const finish = () => {
+      if (!dragging) return;
+      dragging = false;
+      if (dy > 48) this.action('counter-close');
+      else sheet.style.transform = '';
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
   }
 
   playSfx() {
@@ -581,7 +688,8 @@ class UI {
 
   html() {
     if (this.game.phase === 'start') return `${this.startHtml()}${this.rulesHtml()}${this.toastHtml()}`;
-    return `${this.tableHtml()}${this.counterSheetHtml()}${this.overlayHtml()}${this.settingsHtml()}${this.rulesHtml()}${this.toastHtml()}`;
+    const counter = this.portrait() ? '' : this.counterSheetHtml();
+    return `${this.tableHtml()}${counter}${this.overlayHtml()}${this.settingsHtml()}${this.rulesHtml()}${this.toastHtml()}`;
   }
 
   diffGrid() {
@@ -617,6 +725,7 @@ class UI {
   }
 
   tableHtml() {
+    if (this.portrait()) return this.portraitHtml();
     const game = this.game;
     const width = this.width();
     const metrics = cardMetrics(width);
@@ -677,6 +786,156 @@ class UI {
         </div>
         ${banner}
         ${this.buttonsHtml(mine)}
+      </div>`;
+  }
+
+  portraitHtml() {
+    const game = this.game;
+    const width = this.width();
+    const mine = game.turn === 0 && game.phase === 'play';
+    const items = orderedHand(game.seats[0].hand, game.level, this.arrange);
+    const returning = game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return';
+    const selected = items.filter((item) => this.selected.has(item.card.id)).map((item) => item.card);
+    const current = game.phase === 'play' ? (game.trick?.combo || null) : null;
+    const verdict = game.phase === 'play'
+      ? composeVerdict(selected, game.level, this.composeType, current)
+      : { state: 'empty', text: '', canPlay: false };
+    const owner = game.levelOwner == null ? '' : game.levelOwner === 0 ? ' · 我方' : ' · 对方';
+    const counterOn = this.counterVisible() && this.counterSheet;
+    return `
+      <div class="portrait-root">
+        <header class="top p-top">
+          <div class="brand">掼蛋</div>
+          <div class="meta">
+            <span class="chip">打 ${esc(game.level)}${esc(owner)}</span>
+            <span class="wild-pill">逢人配 ${SUIT_SYMBOL.H}${esc(game.level)}</span>
+          </div>
+          <button type="button" class="text-btn${counterOn ? ' on' : ''}" data-act="counter-toggle">记牌</button>
+        </header>
+        <div class="stage p-stage">
+          ${washSvg()}
+          <div class="opp-row">
+            ${this.oppChip(3, width)}
+            ${this.oppChip(2, width)}
+            ${this.oppChip(1, width)}
+          </div>
+          ${this.playWellHtml(width)}
+          ${this.tributeBar()}
+          ${this.portraitSheetHtml()}
+          ${this.portraitToolsHtml(verdict)}
+          ${this.zoomTrayHtml(selected, width)}
+          ${this.fanHtml(items, width, returning)}
+          ${this.portraitButtons(mine, verdict.canPlay)}
+        </div>
+      </div>`;
+  }
+
+  oppChip(id, width) {
+    const game = this.game;
+    const seat = game.seats[id];
+    const hot = game.turn === id && game.phase === 'play';
+    const count = seat.finish && seat.hand.length === 0 ? FINISH_NAME[seat.finish] : `${seat.hand.length} 张`;
+    const thinking = game.turn === id && game.phase === 'play' && !seat.shown;
+    const chipW = Math.max(64, Math.floor((width - 40) / 3) - 12);
+    let last = '<span class="opp-pass">—</span>';
+    if (thinking) last = '<span class="opp-pass">思考</span>';
+    else if (seat.shown?.pass) last = '<span class="opp-pass">不出</span>';
+    else if (seat.shown?.cards?.length) last = packedRow(seat.shown.cards, game.level, chipW, 18);
+    return `
+      <section class="opp ${TONE[id]}${hot ? ' turn' : ''}">
+        <div class="opp-h"><b>${esc(seat.name)}</b><span>${esc(count)}</span></div>
+        <div class="opp-last">${last}</div>
+      </section>`;
+  }
+
+  playWellHtml(width) {
+    const game = this.game;
+    const winner = game.trick?.winner;
+    const seat = winner == null ? null : game.seats[winner];
+    const shown = seat?.shown && !seat.shown.pass ? seat.shown : null;
+    const playedName = shown?.combo?.type === 'tube' ? '连对' : (shown ? typeLabel(shown.combo) : '');
+    const cards = shown
+      ? `<div class="play-label">${esc(seat.name)} · ${esc(playedName)}</div>${packedRow(shown.cards, game.level, Math.max(120, width - 28), 46)}`
+      : '';
+    return `
+      <div class="play-well">
+        ${cards}
+        <p class="status">${esc(game.message || '')}</p>
+      </div>`;
+  }
+
+  portraitSheetHtml() {
+    if (!this.counterVisible() || !this.counterSheet) return '';
+    return `<div class="p-sheet"><button type="button" class="sheet-handle" aria-label="下滑收起记牌器"></button>${this.counterHtml()}</div>`;
+  }
+
+  portraitToolsHtml(verdict) {
+    const info = ARRANGE[this.arrange] || ARRANGE.rank;
+    const modes = Object.entries(ARRANGE).map(([id, item]) => `
+      <button type="button" class="mode-chip${this.arrange === id ? ' on' : ''}" data-act="mode-${id}" aria-pressed="${this.arrange === id}">${item.name}</button>`).join('');
+    const types = COMPOSE_TYPES.map(([id, name]) => `
+      <button type="button" class="type-chip${this.composeType === id ? ' on' : ''}" data-act="type-${id}" aria-pressed="${this.composeType === id}">${name}</button>`).join('');
+    const banner = verdict.state === 'empty' ? '' : `<p class="compose-banner ${esc(verdict.state)}">${esc(verdict.text)}</p>`;
+    const rule = this.ruleOpen
+      ? `<p class="rule-now"><span><b>${esc(info.now)}</b>${esc(info.body)}</span></p>`
+      : '';
+    return `
+      <section class="p-tools">
+        <div class="tool-line">
+          <div class="modes">${modes}</div>
+          <button type="button" class="text-btn slim" data-act="rule-toggle" aria-expanded="${this.ruleOpen}">理牌说明</button>
+          <button type="button" class="text-btn slim" data-act="rules">规则</button>
+          <button type="button" class="text-btn slim" data-act="settings">设置</button>
+        </div>
+        ${rule}
+        <div class="type-row">${types}</div>
+        ${banner}
+      </section>`;
+  }
+
+  zoomTrayHtml(cards, width) {
+    const caption = '<p class="zoom-caption">点击手牌后放大查看完整牌面 · 再点即可收回</p>';
+    if (!cards.length) return `<div class="zoom-tray">${caption}</div>`;
+    const size = zoomCardWidth(width, cards.length);
+    const faces = cards.map((card) => `
+      <button type="button" class="zc" data-cid="${card.id}" style="width:${size.cw}px" aria-label="${esc(cardText(card))}">
+        ${svgCard(card, this.game.level, { selected: true, width: size.cw })}
+      </button>`).join('');
+    return `<div class="zoom-tray">${caption}<div class="zoom-row" style="gap:${size.gap}px">${faces}</div></div>`;
+  }
+
+  fanHtml(items, width, returning) {
+    if (!items.length) return '<div class="fan-zone"><p class="empty-hand">牌已出完</p></div>';
+    const layout = portraitFanLayout(width, items.length);
+    const game = this.game;
+    const cards = items.map((item, i) => {
+      const selected = this.selected.has(item.card.id);
+      const dim = returning && game.seats[0].hand.some(isReturnable) && !isReturnable(item.card);
+      const left = layout.offset + i * layout.step;
+      return `
+        <button type="button" class="fc${selected ? ' selected' : ''}${dim ? ' dim' : ''}" data-cid="${item.card.id}" data-index="${i}"
+          style="left:${left.toFixed(2)}px;width:${layout.cw}px;height:${layout.ch}px;z-index:${selected ? 40 + i : i}"
+          aria-label="${esc(cardText(item.card))}" aria-pressed="${selected}">
+          ${svgCard(item.card, game.level, { selected, width: layout.cw, fan: true })}
+        </button>`;
+    }).join('');
+    return `
+      <div class="fan-zone">
+        <div class="fan-row" style="height:${layout.ch + 18}px"
+          data-n="${items.length}" data-step="${layout.step}" data-offset="${layout.offset}"
+          data-cw="${layout.cw}" data-ch="${layout.ch}" data-magnet="${layout.magnet}" data-ids="${items.map((item) => item.card.id).join(',')}">
+          ${cards}
+        </div>
+      </div>`;
+  }
+
+  portraitButtons(mine, canPlay) {
+    const playOn = mine && canPlay;
+    return `
+      <div class="btns p-btns">
+        <button type="button" class="btn ghost" data-act="hint" ${mine ? '' : 'disabled'}>提示</button>
+        <button type="button" class="btn pass" data-act="pass" ${mine ? '' : 'disabled'}>不出</button>
+        <button type="button" class="btn play" data-act="play" ${playOn ? '' : 'disabled'}>出牌</button>
       </div>`;
   }
 
@@ -926,7 +1185,7 @@ class UI {
           <p>新的一局发牌后进贡。末游把最大的一张交给头游（逢人配不交）。若是双下，三游和末游都交，较大的给头游，较小的给二游。收到贡牌的人还一张牌面 ≤10 的牌。还完由进贡给头游的那家先出。进贡方手里有两张大王则抗贡，改由头游先出。没有 ≤10 的牌时，还最小的非王牌。</p>
           <p>已经打到 A 的一队，这一局必须头游并且队友不是末游，才算过 A。如果只是头游 + 末游，停在 A 继续打。</p>
           <h3>理牌和记牌</h3>
-          <p>理牌在点数、花色、牌型之间切换，规则条会留在牌桌上。选中手牌时，条上写出这种牌型怎么比。例如顺子固定 5 张，按牌面点数衔接，级牌不另算。</p>
+          <p>理牌在点数、花色、牌型之间切换，规则条会留在牌桌上。选中手牌时，条上写出这种牌型怎么比。例如顺子固定 5 张，按牌面点数衔接，级牌不另算。竖屏手机上手牌叠成一排，点一下会抬起，并在上方放大看清牌面。可以先点牌型再自由组合，不合这种牌型或压不过时不能出牌。</p>
           <p>记牌器在任一家手牌少于 10 张时自动打开，也可以随时点「记牌」。它只显示四家剩余张数，以及还没打出的花色和点数，不亮别人的具体手牌。收起之后可以再打开。</p>
           <h3>电脑难度</h3>
           <p>开局选定轻松、均衡或精算，三家电脑同一档，设置里可以改。轻松合法跟牌、偏出小牌。均衡尽量出小牌型、留炸弹，队友的大牌一般不压。精算会记已经打出的公开牌，配合让牌和拦截，炸弹出手更稳，残局按手数取舍。</p>

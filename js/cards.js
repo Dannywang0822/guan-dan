@@ -117,16 +117,34 @@
   function wrap(inner, opts) {
     const size = opts.width ? ` width="${opts.width}" height="${Math.round(opts.width / 0.7)}"` : '';
     let deco = '';
-    if (opts.wild) deco += seal(118, 78, '配', P.cinnabar, '#FBF8F1');
-    else if (opts.level) deco += seal(118, 78, '级', P.gold, P.ink);
+    const badgeX = opts.fan ? 13 : 118;
+    const badgeY = opts.fan ? 74 : 78;
+    if (opts.wild) deco += seal(badgeX, badgeY, '配', P.cinnabar, '#FBF8F1');
+    else if (opts.level) deco += seal(badgeX, badgeY, '级', P.gold, P.ink);
     if (opts.selected) {
       deco += `<rect x="3" y="3" width="${W - 6}" height="${H - 6}" rx="${R - 2}" fill="none" stroke="${P.gold}" stroke-width="5"/>`;
     }
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"${size}>${frame(opts)}${inner}${deco}</svg>`;
   }
 
+  function fanCorner(rank, s) {
+    const color = sc(s);
+    if (rank === '10') {
+      return `<g><text x="3" y="28" text-anchor="start" font-family="${SERIF}" font-weight="700" font-size="18" fill="${color}" textLength="18" lengthAdjust="spacingAndGlyphs">10</text>${suit(s, 12, 48, 14)}</g>`;
+    }
+    return `<g><text x="12" y="30" text-anchor="middle" font-family="${SERIF}" font-weight="700" font-size="26" fill="${color}">${rank}</text>${suit(s, 12, 50, 16)}</g>`;
+  }
+
+  function fanJokerMark(big) {
+    const color = big ? P.cinnabar : P.ink;
+    const label = big ? '大' : '小';
+    return `<text x="13" y="30" text-anchor="middle" font-family="${SERIF}" font-size="24" font-weight="700" fill="${color}">${label}</text><text x="13" y="50" text-anchor="middle" font-family="${SERIF}" font-size="14" font-weight="700" fill="${color}">王</text>`;
+  }
+
   function jokerSVG(big, opts) {
-    return wrap(jokerArt(big), opts || {});
+    opts = opts || {};
+    const art = (opts.fan ? fanJokerMark(big) : '') + jokerArt(big);
+    return wrap(art, opts);
   }
 
   function cardSVG(rank, s, opts) {
@@ -136,7 +154,8 @@
     let mid = pips(rank, s);
     if (rank === 'A') mid = ace(s);
     else if ('JQK'.includes(rank)) mid = court(rank, s);
-    return wrap(corner(rank, s) + mid, opts);
+    const face = (opts.fan ? fanCorner(rank, s) : corner(rank, s)) + mid;
+    return wrap(face, opts);
   }
 
   function backSVG(opts) {
