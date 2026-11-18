@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=10';
+import { unplayedPool } from './controller.js?v=11';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -10,10 +10,10 @@ import {
   pickReturnCard,
   sortCards,
   typeLabel,
-} from './engine.js?v=10';
-import { chooseMove, listSuggestions } from './ai.js?v=10';
-import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=10';
-import { playOpening, shouldPlayOpening } from './opening.js?v=10';
+} from './engine.js?v=11';
+import { chooseMove, listSuggestions } from './ai.js?v=11';
+import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=11';
+import { playOpening, prepareOpeningArt, shouldPlayOpening } from './opening.js?v=11';
 import {
   COMPOSE_TYPES,
   chipTypeForCombo,
@@ -23,7 +23,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from './portrait.js?v=10';
+} from './portrait.js?v=11';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -220,7 +220,26 @@ function ensoSvg() {
   </div>`;
 }
 
+export const OPENING_COLUMN = 430;
+
+/** Size of the table that fades in at 3130ms: the real window, not the 430px column. */
+export function fadedTableBox(appWidth, appHeight) {
+  const width = Math.max(0, Math.round(Number(appWidth) || 0));
+  const height = Math.max(0, Math.round(Number(appHeight) || 0));
+  return { width, height, portrait: isPortraitPhone(width, height) };
+}
+
+export function stageWidthBeforeReveal(appWidth) {
+  const width = Math.max(0, Number(appWidth) || 0);
+  return Math.min(width, OPENING_COLUMN);
+}
+
+export function stageWidthAfterReveal(appWidth) {
+  return Math.max(0, Number(appWidth) || 0);
+}
+
 export function mount(app, game) {
+  prepareOpeningArt();
   const ui = new UI(app, game);
   app.addEventListener('click', (event) => ui.onClick(event));
   const relayout = () => ui.paint();
@@ -414,8 +433,11 @@ class UI {
       }).then(() => {
         if (!this.opening) return;
         this.opening = false;
+        const width = this.app.clientWidth || 0;
+        const same = this.stageBox && Math.abs(width - this.stageBox.width) <= 2;
         this.stageBox = null;
-        this.paint({ live: true });
+        if (same) this.adoptOpenedTable();
+        else this.paint({ live: true });
       });
       return;
     }
@@ -700,22 +722,49 @@ class UI {
   mountTableUnderOpening() {
     const stage = this.app.querySelector('.deux-stage');
     const slot = stage?.querySelector('.table-slot');
+    const layer = this.app.querySelector('.deux-opening');
     if (!stage || !slot || slot.dataset.ready) return;
     slot.dataset.ready = '1';
-    this.stageBox = {
-      width: Math.round(stage.clientWidth || Math.min(430, this.app.clientWidth || 390)),
-      height: Math.round(stage.clientHeight || this.app.clientHeight || window.innerHeight || 800),
-    };
+    layer?.classList.add('reveal');
+    const box = fadedTableBox(
+      this.app.clientWidth || window.innerWidth || 390,
+      this.app.clientHeight || window.innerHeight || 800,
+    );
+    this.stageBox = { width: box.width, height: box.height };
     this.syncHand();
     this.syncSelection();
     this.refreshPlans();
     const portrait = this.portrait();
     if (portrait && this.counterPin !== false && this.counterVisible()) this.counterSheet = true;
     this.app.classList.toggle('portrait', portrait);
+    slot.style.left = '50%';
+    slot.style.right = 'auto';
+    slot.style.top = '0';
+    slot.style.bottom = '0';
+    slot.style.width = `${box.width}px`;
+    slot.style.height = `${box.height}px`;
+    slot.style.marginLeft = `${-Math.round(box.width / 2)}px`;
     slot.innerHTML = this.html();
+    if (!portrait) this.tightenHand();
     this.bindSheet();
     void slot.offsetWidth;
     slot.classList.add('show');
+  }
+
+  adoptOpenedTable() {
+    const slot = this.app.querySelector('.table-slot');
+    if (!slot) {
+      this.paint({ live: true });
+      return;
+    }
+    const portrait = this.app.classList.contains('portrait');
+    const frag = document.createDocumentFragment();
+    while (slot.firstChild) frag.appendChild(slot.firstChild);
+    this.app.classList.remove('staging');
+    this.app.innerHTML = '';
+    this.app.classList.toggle('portrait', portrait);
+    this.app.appendChild(frag);
+    this.bindSheet();
   }
 
   paint({ live = false } = {}) {
