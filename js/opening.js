@@ -1,10 +1,21 @@
 /* 「对合」 opening. Faithful port of the locked single-file canvas (DUR = 4000).
- * Beat math is the official file, unchanged: fractions written as n/2.4 are
- * positions inside the 4.000s timeline, not a shorter duration.
- * The real table is shown only after OPENING_MS. The demo's placeholder table
- * (the one that fades in at 3130ms and offers 再看一次) is not part of the game.
+ * Beat math is the official file: fractions written as n/2.4 sit inside the
+ * 4.000s timeline. The real table starts fading at TABLE_FADE_MS (3130), under
+ * the canvas, and the canvas ends at OPENING_MS. No 再看一次 control.
  */
 export const OPENING_MS = 4000;
+export const TABLE_FADE_MS = 3130;
+
+/** Home 「开始对局」 plays the opening. 「再来一局」 deals straight in. */
+export function shouldPlayOpening(action) {
+  return action === 'start';
+}
+
+/** Official timers: reveal the table at 3130ms, end the canvas at 4000ms. */
+export function scheduleOpening(setTimer, onReveal, onDone) {
+  setTimer(onReveal, TABLE_FADE_MS);
+  setTimer(onDone, OPENING_MS);
+}
 
 function easeOutExpo(t) { return t === 1 ? 1 : 1 - (2 ** (-10 * t)); }
 function easeInCubic(t) { return t * t * t; }
@@ -16,12 +27,13 @@ function clamp(t) { return Math.max(0, Math.min(1, t)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
 function range(a, b, t) { return clamp((t - a) / (b - a)); }
 
-/** Pure beat sample. `table` is true only once the locked 4000ms have elapsed. */
+/** Pure beat sample. `table` is the 3130ms fade; `settled` is the end of the 4s. */
 export function openingSample(elapsedMs) {
   const p = clamp(elapsedMs / OPENING_MS);
   return {
     p,
-    table: elapsedMs >= OPENING_MS,
+    table: elapsedMs >= TABLE_FADE_MS,
+    settled: elapsedMs >= OPENING_MS,
     ringDraw: easeOutExpo(range(0.10, 0.38, p)),
     ringHold: 1 - easeInCubic(range(1.42 / 2.4, 1.58 / 2.4, p)),
     ringScale: lerp(1.15, 0.35, easeInCubic(range(1.25 / 2.4, 1.58 / 2.4, p))),
@@ -42,26 +54,107 @@ export function ringSpinSign(ring) {
 }
 
 const INK = '#12110F';
-const LACQUER = '#8B1E1E';
 const BRONZE = '#B08A4F';
 
-const FACES = [
-  { r: 'A', s: '♠', red: false },
-  { r: '2', s: '♥', red: true },
-  { r: 'K', s: '♠', red: false },
-  { r: 'Q', s: '♦', red: true },
-  { r: 'J', s: '♣', red: false },
-  { r: 'A', s: '♥', red: true },
-  { r: '10', s: '♠', red: false },
-  { r: 'K', s: '♦', red: true },
+export const OPENING_FACES = [
+  { r: 'A', s: 'S' },
+  { r: '2', s: 'H', level: true, wild: true },
+  { r: 'K', s: 'S' },
+  { r: 'Q', s: 'D' },
+  { r: 'J', s: 'C' },
+  { r: 'A', s: 'H' },
+  { r: '10', s: 'S' },
+  { r: 'K', s: 'D' },
+  { r: 'BJ', s: 'J' },
+  { r: 'SJ', s: 'J' },
 ];
 
+const RASTER_W = 280;
+const RASTER_H = 400;
+
+export function openingCardSVG(face) {
+  const api = globalThis.DeuxCards || globalThis.GuanDanCards;
+  if (!api) return '';
+  return api.cardSVG(face.r, face.s, {
+    width: RASTER_W,
+    level: !!face.level,
+    wild: !!face.wild,
+  });
+}
+
+export function openingBackSVG() {
+  const api = globalThis.DeuxCards || globalThis.GuanDanCards;
+  if (!api) return '';
+  return api.backSVG({ width: RASTER_W });
+}
+
+function bytesToBase64(bytes) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+async function loadOpeningFontCSS() {
+  try {
+    const text = 'DEUXJACKQUEENKINGA2345678910JQK级配大小王';
+    const url = `https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Noto+Serif+SC:wght@600;700&text=${encodeURIComponent(text)}`;
+    let css = await fetch(url).then((res) => res.text());
+    const urls = [...new Set([...css.matchAll(/url\(([^)]+)\)/g)].map((m) => m[1].replace(/["']/g, '')))];
+    for (const fontUrl of urls) {
+      const buf = new Uint8Array(await fetch(fontUrl).then((res) => res.arrayBuffer()));
+      css = css.split(fontUrl).join(`data:font/woff2;base64,${bytesToBase64(buf)}`);
+    }
+    return css;
+  } catch {
+    return '';
+  }
+}
+
+function withFonts(svg, css) {
+  if (!css) return svg;
+  return svg.replace(/(<svg\b[^>]*>)/, `$1<defs><style>${css}</style></defs>`);
+}
+
+function svgToCanvas(svg) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = RASTER_W;
+      canvas.height = RASTER_H;
+      canvas.getContext('2d').drawImage(img, 0, 0, RASTER_W, RASTER_H);
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
+}
+
+async function rasterizeOpeningCards() {
+  const css = await loadOpeningFontCSS();
+  const back = await svgToCanvas(withFonts(openingBackSVG(), css));
+  const faces = [];
+  for (const face of OPENING_FACES) {
+    faces.push({ ...face, canvas: await svgToCanvas(withFonts(openingCardSVG(face), css)) });
+  }
+  return { back, faces };
+}
+
 /**
- * Play the opening over `app`. Resolves at OPENING_MS (the first frame at or
- * after 4.000s). Does not remove its own layer; the next table paint replaces
- * the document so the dealt table appears as the canvas ends.
+ * Play the opening over `app`. Calls onReveal at 3130ms so the real table can
+ * fade in under the canvas, and resolves at 4000ms. The layer stays until the
+ * caller paints the settled table.
  */
-export function playOpening(app, { sound = true } = {}) {
+export function playOpening(app, { sound = true, onReveal } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const done = () => {
@@ -75,20 +168,25 @@ export function playOpening(app, { sound = true } = {}) {
     layer.className = 'deux-opening';
     const stage = document.createElement('div');
     stage.className = 'deux-stage';
+    const slot = document.createElement('div');
+    slot.className = 'table-slot';
     const canvas = document.createElement('canvas');
     canvas.className = 'deux-fx';
+    if (home) stage.appendChild(home);
+    stage.appendChild(slot);
     stage.appendChild(canvas);
     layer.appendChild(stage);
     app.appendChild(layer);
+    app.classList.add('staging');
+    if (home) void home.offsetWidth;
+    requestAnimationFrame(() => home?.classList.add('exit'));
 
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      home?.classList.add('exit');
-      setTimeout(done, OPENING_MS);
+      scheduleOpening(setTimeout, () => onReveal?.(), done);
       return;
     }
 
-    const DUR = OPENING_MS;
     let playing = false;
     let startT = 0;
     let W = 0;
@@ -162,80 +260,16 @@ export function playOpening(app, { sound = true } = {}) {
       }
     }
 
-    function roundRect(c, x, y, w, h, r) {
-      const rr = Math.min(r, w / 2, h / 2);
-      c.beginPath();
-      c.moveTo(x + rr, y);
-      c.arcTo(x + w, y, x + w, y + h, rr);
-      c.arcTo(x + w, y + h, x, y + h, rr);
-      c.arcTo(x, y + h, x, y, rr);
-      c.arcTo(x, y, x + w, y, rr);
-      c.closePath();
-    }
-
-    function drawBack(c, w, h) {
-      c.fillStyle = '#FBF8F2';
-      roundRect(c, -w / 2, -h / 2, w, h, Math.min(8, w * 0.08));
-      c.fill();
-      c.strokeStyle = BRONZE;
-      c.lineWidth = 1.2;
-      c.stroke();
-      c.strokeStyle = INK;
-      c.lineWidth = 0.6;
-      roundRect(c, -w / 2 + 3.5, -h / 2 + 3.5, w - 7, h - 7, Math.min(5, w * 0.06));
-      c.stroke();
-      const R = Math.min(w, h) * 0.22;
-      c.save();
-      c.strokeStyle = BRONZE;
-      c.lineWidth = 1.15;
-      c.beginPath();
-      c.arc(-R * 0.55, 0, R, 0, Math.PI * 2);
-      c.stroke();
-      c.beginPath();
-      c.arc(R * 0.55, 0, R, 0, Math.PI * 2);
-      c.stroke();
-      c.restore();
-      c.fillStyle = BRONZE;
-      c.font = `600 ${Math.max(7, w * 0.13)}px "Cormorant Garamond", serif`;
-      c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      c.letterSpacing = '0.2em';
-      c.fillText('DEUX', 0, h / 2 - Math.max(10, h * 0.1));
-    }
-
-    function drawFace(c, w, h, face) {
-      c.fillStyle = '#FBF8F2';
-      roundRect(c, -w / 2, -h / 2, w, h, Math.min(8, w * 0.08));
-      c.fill();
-      c.strokeStyle = 'rgba(18,17,15,.35)';
-      c.lineWidth = 1;
-      c.stroke();
-      const col = face.red ? LACQUER : INK;
-      c.fillStyle = col;
-      const fs = Math.max(11, w * 0.26);
-      c.font = `700 ${fs}px "Cormorant Garamond", serif`;
-      c.textAlign = 'left';
-      c.textBaseline = 'top';
-      c.fillText(face.r, -w / 2 + 5, -h / 2 + 4);
-      c.font = `${fs * 0.85}px "Cormorant Garamond", serif`;
-      c.fillText(face.s, -w / 2 + 5, -h / 2 + 4 + fs);
-      c.save();
-      c.font = `${w * 0.42}px "Cormorant Garamond", serif`;
-      c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      c.fillText(face.s, 0, h * 0.08);
-      c.restore();
-    }
-
     function drawCard(c, x, y, rot, w, h, flip, face, alpha) {
+      const img = Math.cos(flip) >= 0 ? backCanvas : face?.canvas;
+      if (!img) return;
       c.save();
       c.translate(x, y);
       c.rotate(rot);
       c.globalAlpha *= alpha;
       const k = Math.cos(flip);
       c.scale(Math.max(0.08, Math.abs(k)), 1);
-      if (k >= 0) drawBack(c, w, h);
-      else drawFace(c, w, h, face);
+      c.drawImage(img, -w / 2, -h / 2, w, h);
       c.restore();
     }
 
@@ -260,11 +294,8 @@ export function playOpening(app, { sound = true } = {}) {
     }
 
     const N = 22;
-    const cards = Array.from({ length: N * 2 }, (_, i) => ({
-      ring: i < N ? 0 : 1,
-      i: i % N,
-      face: FACES[i % FACES.length],
-    }));
+    let backCanvas = null;
+    let cards = [];
 
     function frame(now) {
       if (!playing) return;
@@ -385,23 +416,36 @@ export function playOpening(app, { sound = true } = {}) {
 
     window.addEventListener('resize', resize);
     if (home) void home.offsetWidth;
-    requestAnimationFrame(() => {
-      home?.classList.add('exit');
-      layer.classList.add('on');
-      resize();
-      playing = true;
-      startT = performance.now();
-      if (sound) playSound();
-      if (document.fonts?.load) {
-        document.fonts.load('600 64px "Cormorant Garamond"');
-        document.fonts.load('700 28px "Noto Serif SC"');
-      }
-      requestAnimationFrame(frame);
-    });
 
-    // If the tab never paints a frame, still release the table at 4s.
-    setTimeout(() => {
-      if (!playing && !settled) done();
-    }, DUR + 80);
+    const boot = async () => {
+      let art = null;
+      try {
+        art = await Promise.race([
+          rasterizeOpeningCards(),
+          new Promise((finish) => setTimeout(() => finish(null), 1500)),
+        ]);
+      } catch {
+        art = null;
+      }
+      backCanvas = art?.back || null;
+      const faces = art?.faces?.length ? art.faces : OPENING_FACES;
+      cards = Array.from({ length: N * 2 }, (_, i) => ({
+        ring: i < N ? 0 : 1,
+        i: i % N,
+        face: faces[i % faces.length],
+      }));
+      requestAnimationFrame(() => {
+        layer.classList.add('on');
+        resize();
+        playing = true;
+        startT = performance.now();
+        if (sound) playSound();
+        scheduleOpening(setTimeout, () => {
+          try { onReveal?.(); } catch { /* the canvas still finishes */ }
+        }, done);
+        requestAnimationFrame(frame);
+      });
+    };
+    boot();
   });
 }

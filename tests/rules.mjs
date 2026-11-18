@@ -20,13 +20,23 @@ import {
   sortCards,
   arrangeGroups,
   upgradeSteps,
-} from '../js/engine.js?v=9';
-import { chooseMove } from '../js/ai.js?v=9';
-import { straightPlanPenalty } from '../js/policy.js?v=9';
-import { Match, unplayedPool } from '../js/controller.js?v=9';
-import { cardMetrics, handLayout, renderCard, twoRowLayout, ARRANGE } from '../js/ui.js?v=9';
-import { OPENING_MS, openingSample, ringSpinSign } from '../js/opening.js?v=9';
-import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=9';
+} from '../js/engine.js?v=10';
+import { chooseMove } from '../js/ai.js?v=10';
+import { straightPlanPenalty } from '../js/policy.js?v=10';
+import { Match, unplayedPool } from '../js/controller.js?v=10';
+import { cardMetrics, handLayout, renderCard, twoRowLayout, ARRANGE, DIFFS } from '../js/ui.js?v=10';
+import {
+  OPENING_MS,
+  OPENING_FACES,
+  TABLE_FADE_MS,
+  openingBackSVG,
+  openingCardSVG,
+  openingSample,
+  ringSpinSign,
+  scheduleOpening,
+  shouldPlayOpening,
+} from '../js/opening.js?v=10';
+import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=10';
 import {
   composeVerdict,
   fanHitIndex,
@@ -34,7 +44,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from '../js/portrait.js?v=9';
+} from '../js/portrait.js?v=10';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -421,11 +431,18 @@ check('card art marks level and wild', () => {
   assert.ok(big.includes('大 王'));
   const level = cardSVG('2', 'S', { level: true, width: 60 });
   assert.ok(level.includes('级'));
+  assert.ok(level.includes('translate(16 68)'));
+  assert.ok(level.includes('rotate(180 70 100)'));
+  assert.equal(level.includes('translate(112'), false);
   assert.ok(level.toLowerCase().includes('#b08a4f'));
   const wild = cardSVG('2', 'H', { wild: true, width: 60 });
   assert.ok(wild.includes('配'));
   assert.ok(wild.includes('#F7EDEA') || wild.includes('#f7edea'));
   assert.equal(wild.includes('级'), false);
+  const both = cardSVG('2', 'H', { level: true, wild: true, width: 60 });
+  assert.ok(both.includes('translate(16 68)'));
+  assert.ok(both.includes('translate(16 88)'));
+  assert.equal(both.includes('translate(112'), false);
   const heart = cardSVG('A', 'H', { width: 66 });
   assert.ok(heart.toLowerCase().includes('#8b1e1e'));
   assert.ok(jack.toLowerCase().includes('#12110f'));
@@ -920,6 +937,9 @@ check('fan ten stays in the left peek', () => {
   const ten = cardSVG('10', 'H', { fan: true, width: 54, level: true });
   assert.ok(ten.includes('>10<'), ten);
   assert.ok(ten.includes('级'));
+  assert.ok(ten.includes('translate(16 68)'));
+  assert.ok(ten.includes('rotate(180 70 100)'));
+  assert.equal(ten.includes('translate(112'), false);
   assert.ok(ten.includes('x="16"'), 'left index stays in the overlapped strip');
   const wild = cardSVG('2', 'H', { fan: true, wild: true, width: 54 });
   assert.ok(wild.includes('配'));
@@ -938,11 +958,16 @@ check('level and wild flags reach the renderer', () => {
   assert.ok(level.toLowerCase().includes('#b08a4f'));
   const wild = renderCard({ rank: '2', suit: 'H', id: 2 }, '2', { width: 60 });
   assert.ok(wild.includes('配'));
-  assert.equal(wild.includes('级'), false);
+  assert.ok(wild.includes('级'));
+  assert.ok(wild.includes('translate(16 68)'));
+  assert.ok(wild.includes('translate(16 88)'));
+  assert.ok(wild.includes('rotate(180 70 100)'));
+  assert.equal(wild.includes('translate(112'), false);
   assert.ok(wild.includes('#F7EDEA') || wild.includes('#f7edea'));
   const heartAce = renderCard({ rank: 'A', suit: 'H', id: 3 }, 'A', { width: 70 });
   assert.ok(heartAce.includes('配'));
-  assert.equal(heartAce.includes('级'), false);
+  assert.ok(heartAce.includes('级'));
+  assert.ok(heartAce.includes('translate(16 88)'));
   const plain = renderCard({ rank: '3', suit: 'H', id: 4 }, '2', { width: 60 });
   assert.equal(plain.includes('级'), false);
   assert.equal(plain.includes('配'), false);
@@ -954,12 +979,32 @@ check('level and wild flags reach the renderer', () => {
   assert.ok(back.includes('DEUX'));
 });
 
-check('opening is 4000ms before the first table', () => {
+check('opening fades the table at 3130ms and settles at 4000ms', () => {
   assert.equal(OPENING_MS, 4000);
+  assert.equal(TABLE_FADE_MS, 3130);
   assert.equal(openingSample(0).table, false);
-  assert.equal(openingSample(3999).table, false);
+  assert.equal(openingSample(3129).table, false);
+  assert.equal(openingSample(3130).table, true);
+  assert.equal(openingSample(3500).settled, false);
+  assert.equal(openingSample(3999).settled, false);
+  assert.equal(openingSample(4000).settled, true);
   assert.equal(openingSample(4000).table, true);
   assert.equal(openingSample(5000).p, 1);
+  assert.equal(shouldPlayOpening('start'), true);
+  assert.equal(shouldPlayOpening('restart'), false);
+  const timers = [];
+  scheduleOpening((fn, ms) => timers.push(ms), () => {}, () => {});
+  assert.deepEqual(timers, [3130, 4000]);
+  const ace = openingCardSVG(OPENING_FACES[0]);
+  assert.ok(ace.includes('DEUX'));
+  assert.ok(openingCardSVG(OPENING_FACES.find((face) => face.r === 'BJ')).includes('大 王'));
+  assert.ok(openingCardSVG(OPENING_FACES.find((face) => face.r === 'SJ')).includes('小 王'));
+  assert.ok(openingCardSVG(OPENING_FACES.find((face) => face.r === 'Q')).includes('QUEEN'));
+  assert.ok(openingBackSVG().includes('DEUX'));
+  const copy = Object.fromEntries(DIFFS.map(([id, , body]) => [id, body]));
+  assert.equal(copy.easy, '合法跟牌，偏出小牌。');
+  assert.equal(copy.balanced, '尽量出小牌型、留炸弹，队友大牌一般不压。');
+  assert.equal(copy.sharp, '记公开牌，配合让牌与拦截，残局算手数。');
   const rings = openingSample(900);
   const orbit = openingSample(1600);
   const flip = openingSample(2100);

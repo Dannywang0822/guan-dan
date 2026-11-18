@@ -1,7 +1,6 @@
 /* DEUX · Guandan card faces. viewBox 140×200.
- * Source of truth for in-game faces, backs, and jokers.
- * Browser: window.DeuxCards and window.GuanDanCards (the game renderer).
- * CommonJS: module.exports, and the same globals for the rules tests.
+ * Browser: window.DeuxCards and window.GuanDanCards.
+ * CommonJS: module.exports and the same globals.
  */
 (function (root, factory) {
   const api = factory();
@@ -138,6 +137,20 @@
       </g>`;
   }
 
+  // 级/配 sit under the left index pip so a left-only stacked hand still shows them.
+  // A 180° copy lives in the opposite corner, like the rank index.
+  function markSeals(opts) {
+    const items = [];
+    if (opts && opts.level) items.push(["级", P.bronze, P.paper, P.bronze]);
+    if (opts && opts.wild) items.push(["配", P.lacquer, P.paper, P.bronze]);
+    if (!items.length) return "";
+    return items.map((it, i) => {
+      const y = 68 + i * 20;
+      const g = seal(it[0], 16, y, it[1], it[2], it[3]);
+      return g + `<g transform="rotate(180 70 100)">${g}</g>`;
+    }).join("");
+  }
+
   function aceExtra(suit, kind, col) {
     if (suit === "S") {
       return `
@@ -186,9 +199,7 @@
         .map(([x, y, f]) => pip(kind, x, y, pipSize, col, f))
         .join("");
     }
-    const marks =
-      (opts.level ? seal("级", 112, 24, P.bronze, P.paper) : "") +
-      (opts.wild ? seal("配", 112, 46, P.lacquer, P.paper, P.bronze) : "");
+    const marks = markSeals(opts);
     return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 200" width="${w}" height="${h}" role="img" aria-label="${rank}${suit}">
       ${frame(opts)}
       ${index(rank, kind, col, opts)}

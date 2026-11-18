@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=9';
+import { unplayedPool } from './controller.js?v=10';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -10,10 +10,10 @@ import {
   pickReturnCard,
   sortCards,
   typeLabel,
-} from './engine.js?v=9';
-import { chooseMove, listSuggestions } from './ai.js?v=9';
-import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=9';
-import { playOpening } from './opening.js?v=9';
+} from './engine.js?v=10';
+import { chooseMove, listSuggestions } from './ai.js?v=10';
+import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=10';
+import { playOpening, shouldPlayOpening } from './opening.js?v=10';
 import {
   COMPOSE_TYPES,
   chipTypeForCombo,
@@ -23,15 +23,15 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from './portrait.js?v=9';
+} from './portrait.js?v=10';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
 const TONE = ['gold', 'cinnabar', 'bamboo', 'slate'];
-const DIFFS = [
+export const DIFFS = [
   ['easy', '轻松', '合法跟牌，偏出小牌。'],
-  ['balanced', '均衡', '按实战口诀出牌：对子先行，逢人配留作炸，队友大牌不压。'],
-  ['sharp', '精算', '口诀更严，并记已出的王、二、级牌和缺门。'],
+  ['balanced', '均衡', '尽量出小牌型、留炸弹，队友大牌一般不压。'],
+  ['sharp', '精算', '记公开牌，配合让牌与拦截，残局算手数。'],
 ];
 export const ARRANGE = {
   rank: {
@@ -152,7 +152,7 @@ function svgCard(card, level, opts = {}) {
   const wild = isWild(card, level);
   const levelCard = !isJoker(card) && card.rank === level;
   return api.cardSVG(card.rank, card.suit, {
-    level: levelCard && !wild,
+    level: levelCard,
     wild,
     selected: !!opts.selected,
     width: opts.width,
@@ -265,6 +265,7 @@ class UI {
   }
 
   width() {
+    if (this.stageBox) return this.stageBox.width;
     return this.app.clientWidth || window.innerWidth || 390;
   }
 
@@ -274,7 +275,7 @@ class UI {
 
   portrait() {
     const width = this.width();
-    const height = this.app.clientHeight || window.innerHeight || 0;
+    const height = this.stageBox?.height || this.app.clientHeight || window.innerHeight || 0;
     return isPortraitPhone(width, height);
   }
 
@@ -391,28 +392,29 @@ class UI {
       this.paint();
       return;
     }
-    if (name === 'restart') {
+    if (name === 'start' || name === 'restart') {
+      if (name === 'start' && this.opening) return;
       this.selected.clear();
       this.hintIndex = -1;
       this.selKey = '';
       this.composeType = null;
       game.setDifficulty(this.difficulty);
-      game.startMatch();
-      this.paint({ live: true });
-      return;
-    }
-    if (name === 'start') {
-      if (this.opening) return;
+      if (!shouldPlayOpening(name)) {
+        game.startMatch();
+        this.paint({ live: true });
+        return;
+      }
       this.opening = true;
-      this.selected.clear();
-      this.hintIndex = -1;
-      this.selKey = '';
-      this.composeType = null;
-      game.setDifficulty(this.difficulty);
-      playOpening(this.app, { sound: !this.muted }).then(() => {
+      this.app.classList.add('staging');
+      game.startMatch();
+      this.heard = game.sfxSeq;
+      playOpening(this.app, {
+        sound: !this.muted,
+        onReveal: () => this.mountTableUnderOpening(),
+      }).then(() => {
         if (!this.opening) return;
         this.opening = false;
-        game.startMatch();
+        this.stageBox = null;
         this.paint({ live: true });
       });
       return;
@@ -695,6 +697,27 @@ class UI {
     return `<div class="group-box"><div class="type-row">${toggle}${chips}</div>${noteHtml}</div>`;
   }
 
+  mountTableUnderOpening() {
+    const stage = this.app.querySelector('.deux-stage');
+    const slot = stage?.querySelector('.table-slot');
+    if (!stage || !slot || slot.dataset.ready) return;
+    slot.dataset.ready = '1';
+    this.stageBox = {
+      width: Math.round(stage.clientWidth || Math.min(430, this.app.clientWidth || 390)),
+      height: Math.round(stage.clientHeight || this.app.clientHeight || window.innerHeight || 800),
+    };
+    this.syncHand();
+    this.syncSelection();
+    this.refreshPlans();
+    const portrait = this.portrait();
+    if (portrait && this.counterPin !== false && this.counterVisible()) this.counterSheet = true;
+    this.app.classList.toggle('portrait', portrait);
+    slot.innerHTML = this.html();
+    this.bindSheet();
+    void slot.offsetWidth;
+    slot.classList.add('show');
+  }
+
   paint({ live = false } = {}) {
     if (this.opening) return;
     this.syncHand();
@@ -703,6 +726,7 @@ class UI {
     const portrait = this.portrait();
     if (portrait && this.counterPin !== false && this.counterVisible()) this.counterSheet = true;
     this.app.classList.toggle('portrait', portrait);
+    this.app.classList.toggle('staging', this.game.phase === 'start' || this.opening);
     this.app.innerHTML = this.html();
     if (!portrait) this.tightenHand();
     this.bindSheet();
