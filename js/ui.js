@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=8';
+import { unplayedPool } from './controller.js?v=9';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -10,9 +10,10 @@ import {
   pickReturnCard,
   sortCards,
   typeLabel,
-} from './engine.js?v=8';
-import { chooseMove, listSuggestions } from './ai.js?v=8';
-import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=8';
+} from './engine.js?v=9';
+import { chooseMove, listSuggestions } from './ai.js?v=9';
+import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=9';
+import { playOpening } from './opening.js?v=9';
 import {
   COMPOSE_TYPES,
   chipTypeForCombo,
@@ -22,7 +23,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from './portrait.js?v=8';
+} from './portrait.js?v=9';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -141,7 +142,7 @@ function esc(value) {
 }
 
 function cardsApi() {
-  return window.GuanDanCards;
+  return globalThis.GuanDanCards;
 }
 
 function svgCard(card, level, opts = {}) {
@@ -157,6 +158,11 @@ function svgCard(card, level, opts = {}) {
     width: opts.width,
     fan: !!opts.fan,
   });
+}
+
+/** Card face used by the table, the fan, the zoom tray, and the 逢人配 chip. */
+export function renderCard(card, level, opts = {}) {
+  return svgCard(card, level, opts);
 }
 
 function faceRow(cards, level, width, maxW) {
@@ -254,6 +260,7 @@ class UI {
     this.composeType = null;
     this.ruleOpen = false;
     this.difficulty = loadDifficulty();
+    this.opening = false;
     game.setDifficulty(this.difficulty);
   }
 
@@ -384,7 +391,7 @@ class UI {
       this.paint();
       return;
     }
-    if (name === 'start' || name === 'restart') {
+    if (name === 'restart') {
       this.selected.clear();
       this.hintIndex = -1;
       this.selKey = '';
@@ -392,6 +399,22 @@ class UI {
       game.setDifficulty(this.difficulty);
       game.startMatch();
       this.paint({ live: true });
+      return;
+    }
+    if (name === 'start') {
+      if (this.opening) return;
+      this.opening = true;
+      this.selected.clear();
+      this.hintIndex = -1;
+      this.selKey = '';
+      this.composeType = null;
+      game.setDifficulty(this.difficulty);
+      playOpening(this.app, { sound: !this.muted }).then(() => {
+        if (!this.opening) return;
+        this.opening = false;
+        game.startMatch();
+        this.paint({ live: true });
+      });
       return;
     }
     if (name === 'arrange') {
@@ -673,6 +696,7 @@ class UI {
   }
 
   paint({ live = false } = {}) {
+    if (this.opening) return;
     this.syncHand();
     this.syncSelection();
     this.refreshPlans();
@@ -783,20 +807,27 @@ class UI {
   }
 
   startHtml() {
-    const api = cardsApi();
-    const fan = api ? `
-      <div class="fan">
-        <div class="fan-card tilt-l">${api.cardSVG('A', 'S', { width: 78 })}</div>
-        <div class="fan-card">${api.cardSVG('2', 'H', { wild: true, width: 86 })}</div>
-        <div class="fan-card tilt-r">${api.cardSVG('BJ', 'J', { width: 78 })}</div>
-      </div>` : '';
     return `
       <section class="start">
-        ${washSvg()}
-        <p class="kicker">水墨素雅 · 四人分组</p>
+        <div class="start-wave" aria-hidden="true"></div>
+        <p class="kicker">DEUX · 四人分组</p>
         <h1>掼蛋</h1>
         <p class="lead">从二打到 A。你和对家一队，先过 A 的一边获胜。</p>
-        ${fan}
+        <div class="home-fan" aria-hidden="true">
+          <div class="home-mini a">
+            <div class="idx">A</div>
+            <div class="pip">♠</div>
+          </div>
+          <div class="home-mini b">
+            <div class="idx red">2</div>
+            <div class="pip red">♥</div>
+          </div>
+          <div class="home-mini c">
+            <div class="idx">王</div>
+            <div class="joker-mark"></div>
+            <div class="cn">大王</div>
+          </div>
+        </div>
         <p class="diff-head">电脑难度</p>
         ${this.diffGrid()}
         <p class="diff-note">三家电脑同一难度，对局中可在设置里更改</p>
