@@ -1,183 +1,250 @@
-/* 掼蛋 · 水墨素雅牌面。红黑用朱砂 / 松烟，牌角点数加大，保证缩小后仍能认牌。
- * cardSVG(rank, suit, {level, wild, selected, width})  rank: A,2..10,J,Q,K,BJ,SJ  suit: S H C D
- * backSVG({width})  jokerSVG(big, opts)  PALETTE  SUIT_PATH
- * UMD: require() 或 window.GuanDanCards
+/* DEUX · Guandan card faces. viewBox 140×200.
+ * Source of truth for in-game faces, backs, and jokers.
+ * Browser: window.DeuxCards and window.GuanDanCards (the game renderer).
+ * CommonJS: module.exports, and the same globals for the rules tests.
  */
-(function (root) {
+(function (root, factory) {
+  const api = factory();
+  const g = typeof globalThis !== "undefined" ? globalThis : root;
+  g.DeuxCards = api;
+  g.GuanDanCards = api;
+  if (typeof module === "object" && module && module.exports) module.exports = api;
+})(typeof globalThis !== "undefined" ? globalThis : this, function () {
   const P = {
-    cinnabar: '#8C3A3A',
-    ink: '#1C1C1C',
-    paper: '#FBF8F1',
-    wildPaper: '#F6E4D0',
-    gold: '#C4A882',
-    bamboo: '#5B7268',
-    edge: '#1C1C1C',
-  };
-  const SERIF = "'Noto Serif SC','Songti SC','STSong','SimSun',serif";
-  const SUIT_PATH = {
-    H: 'M10 18.2C8.6 16.9 1.5 11.8 1.5 6.8 1.5 3.8 3.8 1.6 6.4 1.6c1.6 0 2.9.8 3.6 2.1.7-1.3 2-2.1 3.6-2.1 2.6 0 4.9 2.2 4.9 5.2 0 5-7.1 10.1-8.5 11.4z',
-    D: 'M10 1.2 18.2 10 10 18.8 1.8 10z',
-    S: 'M10 1.2C11.6 3.6 18.4 8 18.4 12.2c0 2.5-1.9 4.3-4.2 4.3-1.4 0-2.5-.6-3.2-1.5.2 1.5.9 2.7 2 3.6H7c1.1-.9 1.8-2.1 2-3.6-.7.9-1.8 1.5-3.2 1.5-2.3 0-4.2-1.8-4.2-4.3C1.6 8 8.4 3.6 10 1.2z',
-    C: 'M10 1.6a4 4 0 0 1 3.4 6.1 4 4 0 1 1-1.7 6.8c.2 1.6.9 2.8 2 3.7H6.3c1.1-.9 1.8-2.1 2-3.7a4 4 0 1 1-1.7-6.8A4 4 0 0 1 10 1.6z',
-  };
-  const W = 140;
-  const H = 200;
-  const R = 10;
-  const isRed = (s) => s === 'H' || s === 'D';
-  const sc = (s) => (isRed(s) ? P.cinnabar : P.ink);
-  const suit = (s, x, y, size, flip) =>
-    `<path d="${SUIT_PATH[s]}" fill="${sc(s)}" transform="translate(${x} ${y})${flip ? ' rotate(180)' : ''} scale(${size / 20}) translate(-10 -10)"/>`;
-
-  function seal(x, y, text, bg, fg) {
-    return `<g transform="translate(${x} ${y})"><rect x="-12" y="-12" width="24" height="24" rx="2" fill="${bg}" stroke="${fg}" stroke-width="1.2"/><text y="5" text-anchor="middle" font-family="${SERIF}" font-size="14" font-weight="700" fill="${fg}">${text}</text></g>`;
-  }
-
-  function rankText(rank, x, y, color, size) {
-    const ten = rank === '10';
-    const fs = ten ? Math.round(size * 0.72) : size;
-    const fit = ten ? ' textLength="26" lengthAdjust="spacingAndGlyphs"' : '';
-    return `<text x="${x}" y="${y}" text-anchor="middle" font-family="${SERIF}" font-weight="700" font-size="${fs}" fill="${color}"${fit}>${rank}</text>`;
-  }
-
-  function corner(rank, s) {
-    const one = rankText(rank, 16, 32, sc(s), 30) + suit(s, 16, 50, 18);
-    return `<g>${one}</g><g transform="rotate(180 70 100)">${one}</g>`;
-  }
-
-  const COL = [48, 70, 92];
-  const LAYOUT = {
-    2: [[1, 78], [1, 150, 1]],
-    3: [[1, 74], [1, 114], [1, 154, 1]],
-    4: [[0, 78], [2, 78], [0, 148, 1], [2, 148, 1]],
-    5: [[0, 74], [2, 74], [1, 112], [0, 150, 1], [2, 150, 1]],
-    6: [[0, 70], [2, 70], [0, 110], [2, 110], [0, 150, 1], [2, 150, 1]],
-    7: [[0, 68], [2, 68], [1, 90], [0, 112], [2, 112], [0, 152, 1], [2, 152, 1]],
-    8: [[0, 66], [2, 66], [1, 86], [0, 108], [2, 108], [1, 132, 1], [0, 154, 1], [2, 154, 1]],
-    9: [[0, 66], [2, 66], [0, 92], [2, 92], [1, 112], [0, 132, 1], [2, 132, 1], [0, 156, 1], [2, 156, 1]],
-    10: [[0, 64], [2, 64], [1, 80], [0, 98], [2, 98], [0, 126, 1], [2, 126, 1], [1, 142, 1], [0, 158, 1], [2, 158, 1]],
+    ivory: "#F4EFE6",
+    paper: "#FBF8F2",
+    ink: "#12110F",
+    lacquer: "#8B1E1E",
+    bronze: "#B08A4F",
+    graphite: "#6B6560",
+    wildPaper: "#F7EDEA",
   };
 
-  function pips(rank, s) {
-    const n = +rank;
-    const size = n >= 8 ? 18 : n >= 6 ? 20 : 24;
-    return (LAYOUT[n] || []).map(([c, y, flip]) => suit(s, COL[c], y, size, flip)).join('');
+  const SUITS = {
+    S: { pip: "spade", red: false, name: "spades" },
+    H: { pip: "heart", red: true, name: "hearts" },
+    C: { pip: "club", red: false, name: "clubs" },
+    D: { pip: "diamond", red: true, name: "diamonds" },
+  };
+
+  const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+
+  const LAYOUTS = {
+    A: [[70, 100, 1]],
+    "2": [[70, 48, 1], [70, 152, -1]],
+    "3": [[70, 48, 1], [70, 100, 1], [70, 152, -1]],
+    "4": [[46, 48, 1], [94, 48, 1], [46, 152, -1], [94, 152, -1]],
+    "5": [[46, 48, 1], [94, 48, 1], [70, 100, 1], [46, 152, -1], [94, 152, -1]],
+    "6": [[46, 48, 1], [94, 48, 1], [46, 100, 1], [94, 100, 1], [46, 152, -1], [94, 152, -1]],
+    "7": [[46, 46, 1], [94, 46, 1], [70, 72, 1], [46, 100, 1], [94, 100, 1], [46, 154, -1], [94, 154, -1]],
+    "8": [[46, 46, 1], [94, 46, 1], [70, 72, 1], [46, 100, 1], [94, 100, 1], [70, 128, -1], [46, 154, -1], [94, 154, -1]],
+    "9": [[46, 42, 1], [94, 42, 1], [46, 80, 1], [94, 80, 1], [70, 100, 1], [46, 120, -1], [94, 120, -1], [46, 158, -1], [94, 158, -1]],
+    "10": [[46, 42, 1], [94, 42, 1], [70, 61, 1], [46, 80, 1], [94, 80, 1], [46, 120, -1], [94, 120, -1], [70, 139, -1], [46, 158, -1], [94, 158, -1]],
+  };
+
+  let _uid = 0;
+  const uid = (p) => `${p}-${++_uid}`;
+
+  function color(suit, opts) {
+    if (opts && opts.mono) return P.ink;
+    return SUITS[suit].red ? P.lacquer : P.ink;
   }
 
-  function ace(s) {
-    return `<circle cx="70" cy="112" r="34" fill="none" stroke="${P.gold}" stroke-width="1.4"/>${suit(s, 70, 112, 54)}`;
+  function pipPath(kind, s) {
+    // unit paths centered at 0,0; s = scale (half-width ~ s*0.5)
+    if (kind === "spade") {
+      return `M 0 ${-0.52 * s}
+        C ${0.30 * s} ${-0.16 * s} ${0.52 * s} ${0.04 * s} ${0.52 * s} ${0.22 * s}
+        C ${0.52 * s} ${0.40 * s} ${0.34 * s} ${0.52 * s} ${0.16 * s} ${0.52 * s}
+        C ${0.08 * s} ${0.52 * s} ${0.04 * s} ${0.46 * s} ${0.05 * s} ${0.40 * s}
+        L ${0.09 * s} ${0.68 * s} L ${-0.09 * s} ${0.68 * s} L ${-0.05 * s} ${0.40 * s}
+        C ${-0.04 * s} ${0.46 * s} ${-0.08 * s} ${0.52 * s} ${-0.16 * s} ${0.52 * s}
+        C ${-0.34 * s} ${0.52 * s} ${-0.52 * s} ${0.40 * s} ${-0.52 * s} ${0.22 * s}
+        C ${-0.52 * s} ${0.04 * s} ${-0.30 * s} ${-0.16 * s} 0 ${-0.52 * s} Z`;
+    }
+    if (kind === "heart") {
+      return `M 0 ${0.56 * s}
+        C ${0.46 * s} ${0.18 * s} ${0.54 * s} ${-0.10 * s} ${0.54 * s} ${-0.24 * s}
+        C ${0.54 * s} ${-0.44 * s} ${0.36 * s} ${-0.56 * s} ${0.20 * s} ${-0.56 * s}
+        C ${0.08 * s} ${-0.56 * s} ${0.02 * s} ${-0.48 * s} 0 ${-0.38 * s}
+        C ${-0.02 * s} ${-0.48 * s} ${-0.08 * s} ${-0.56 * s} ${-0.20 * s} ${-0.56 * s}
+        C ${-0.36 * s} ${-0.56 * s} ${-0.54 * s} ${-0.44 * s} ${-0.54 * s} ${-0.24 * s}
+        C ${-0.54 * s} ${-0.10 * s} ${-0.46 * s} ${0.18 * s} 0 ${0.56 * s} Z`;
+    }
+    if (kind === "diamond") {
+      return `M 0 ${-0.58 * s} L ${0.42 * s} 0 L 0 ${0.58 * s} L ${-0.42 * s} 0 Z`;
+    }
+    // club
+    const r = 0.26 * s;
+    const cy = -0.10 * s;
+    return `
+      M ${-0.08 * s} ${0.22 * s}
+      L ${-0.10 * s} ${0.68 * s} L ${0.10 * s} ${0.68 * s} L ${0.08 * s} ${0.22 * s}
+      M ${-r} ${cy - r * 0.95} a ${r} ${r} 0 1 1 ${r * 2} 0 a ${r} ${r} 0 1 1 ${-r * 2} 0
+      M ${-r * 1.85} ${cy + r * 0.75} a ${r} ${r} 0 1 1 ${r * 2} 0 a ${r} ${r} 0 1 1 ${-r * 2} 0
+      M ${r * -0.15} ${cy + r * 0.75} a ${r} ${r} 0 1 1 ${r * 2} 0 a ${r} ${r} 0 1 1 ${-r * 2} 0
+    `.replace(/\n\s+/g, " ");
   }
 
-  function court(rank, s) {
-    const color = sc(s);
-    return `<rect x="40" y="70" width="60" height="78" rx="3" fill="none" stroke="${color}" stroke-width="1" opacity=".45"/>
-      <text x="70" y="124" text-anchor="middle" font-family="${SERIF}" font-size="52" font-weight="700" fill="${color}">${rank}</text>
-      ${suit(s, 70, 142, 16)}`;
-  }
-
-  function crane() {
-    return `<g transform="translate(70 118)" fill="${P.ink}" stroke="${P.ink}" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M-8 4c-16-2-24 8-14 12 6-4 12-6 14-12z"/>
-      <ellipse cx="6" cy="8" rx="14" ry="8"/>
-      <path d="M14 2c4-14 0-26 10-34" fill="none" stroke-width="3.2"/>
-      <circle cx="26" cy="-34" r="3.2" stroke="none"/>
-      <path d="M29 -34h8" fill="none" stroke="${P.cinnabar}" stroke-width="2"/>
-      <path d="M22 -38c2-7 6-5 4 2z" fill="${P.cinnabar}" stroke="none"/>
-      <path d="M0 0c2-12 16-14 18-2" fill="none" stroke-width="2.2"/>
-      <path d="M0 16v8M8 16v10" fill="none" stroke-width="1.4"/>
-    </g>`;
-  }
-
-  function bamboo() {
-    return `<g transform="translate(70 122)" fill="none" stroke="${P.ink}" stroke-linecap="round">
-      <path d="M-14 32V-4" stroke-width="2.2"/>
-      <path d="M-14 6H-24M-14 18H-6" stroke-width="1.5"/>
-      <path d="M2 36V-16" stroke-width="3"/>
-      <path d="M2 -4H14M2 12H-8M2 24H12" stroke-width="1.6"/>
-      <path d="M16 32V4" stroke-width="2"/>
-      <path d="M16 14H24M16 24H10" stroke-width="1.4"/>
-      <path d="M2 -12c10-10 20-2 14 6" stroke="${P.bamboo}" stroke-width="1.8"/>
-    </g>`;
-  }
-
-  function jokerArt(big) {
-    const color = big ? P.cinnabar : P.ink;
-    const label = big ? '大 王' : '小 王';
-    return `<text x="70" y="52" text-anchor="middle" font-family="${SERIF}" font-size="36" font-weight="700" fill="${color}">${label}</text>
-      ${big ? crane() : bamboo()}`;
+  function pip(kind, x, y, s, fill, flip) {
+    const body =
+      kind === "club"
+        ? `<g fill="${fill}">
+            <circle cx="0" cy="${-0.22 * s}" r="${0.27 * s}"/>
+            <circle cx="${-0.30 * s}" cy="${0.12 * s}" r="${0.27 * s}"/>
+            <circle cx="${0.30 * s}" cy="${0.12 * s}" r="${0.27 * s}"/>
+            <rect x="${-0.07 * s}" y="${0.10 * s}" width="${0.14 * s}" height="${0.58 * s}"/>
+          </g>`
+        : `<path d="${pipPath(kind, s)}" fill="${fill}"/>`;
+    const t = flip < 0 ? `translate(${x} ${y}) rotate(180)` : `translate(${x} ${y})`;
+    return `<g transform="${t}">${body}</g>`;
   }
 
   function frame(opts) {
-    const face = opts.wild ? P.wildPaper : P.paper;
-    const stroke = opts.wild ? P.cinnabar : P.edge;
-    const width = opts.wild ? 2.4 : 1.6;
-    return `<rect x="1.2" y="1.2" width="${W - 2.4}" height="${H - 2.4}" rx="${R}" fill="${face}" stroke="${stroke}" stroke-width="${width}"/>
-      <rect x="5" y="5" width="${W - 10}" height="${H - 10}" rx="${R - 3}" fill="none" stroke="${opts.wild ? P.cinnabar : P.gold}" stroke-width=".8" opacity=".85"/>`;
+    const level = opts && opts.level;
+    const wild = opts && opts.wild;
+    const stroke = level ? P.bronze : "rgba(18,17,15,.28)";
+    const sw = level ? 2.2 : 1.15;
+    const fill = wild ? P.wildPaper : P.paper;
+    const inner = `<rect x="5" y="5" width="130" height="190" rx="8" fill="none" stroke="${P.ink}" stroke-width="0.55" opacity=".35"/>`;
+    return `
+      <rect x="0" y="0" width="140" height="200" rx="12" fill="${P.ivory}"/>
+      <rect x="3" y="3" width="134" height="194" rx="10" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
+      ${inner}
+    `;
   }
 
-  function wrap(inner, opts) {
-    const size = opts.width ? ` width="${opts.width}" height="${Math.round(opts.width / 0.7)}"` : '';
-    let deco = '';
-    const badgeX = opts.fan ? 13 : 118;
-    const badgeY = opts.fan ? 74 : 78;
-    if (opts.wild) deco += seal(badgeX, badgeY, '配', P.cinnabar, '#FBF8F1');
-    else if (opts.level) deco += seal(badgeX, badgeY, '级', P.gold, P.ink);
-    if (opts.selected) {
-      deco += `<rect x="3" y="3" width="${W - 6}" height="${H - 6}" rx="${R - 2}" fill="none" stroke="${P.gold}" stroke-width="5"/>`;
+  function index(rank, kind, col, opts) {
+    const fs = rank === "10" ? 22 : 26;
+    return `
+      <g fill="${col}">
+        <text x="16" y="30" text-anchor="middle" font-family="Cormorant Garamond, Noto Serif SC, serif"
+          font-weight="700" font-size="${fs}" letter-spacing="${rank === "10" ? "-0.06em" : "0"}">${rank}</text>
+        <g transform="translate(16 46)">${pip(kind, 0, 0, 14, col, 1).replace(/transform="[^"]*"/, "")}</g>
+      </g>
+      <g fill="${col}" transform="rotate(180 70 100)">
+        <text x="16" y="30" text-anchor="middle" font-family="Cormorant Garamond, Noto Serif SC, serif"
+          font-weight="700" font-size="${fs}" letter-spacing="${rank === "10" ? "-0.06em" : "0"}">${rank}</text>
+        <g transform="translate(16 46)">${pip(kind, 0, 0, 14, col, 1).replace(/transform="[^"]*"/, "")}</g>
+      </g>
+    `;
+  }
+
+  function seal(text, x, y, bg, fg, stroke) {
+    return `
+      <g transform="translate(${x} ${y})">
+        <rect x="-9" y="-9" width="18" height="18" rx="2" fill="${bg}" stroke="${stroke || bg}" stroke-width="0.8"/>
+        <text x="0" y="5" text-anchor="middle" font-family="Noto Serif SC, serif" font-weight="600" font-size="11" fill="${fg}">${text}</text>
+      </g>`;
+  }
+
+  function aceExtra(suit, kind, col) {
+    if (suit === "S") {
+      return `
+        <g transform="translate(70 100)">
+          <circle r="36" fill="none" stroke="${P.bronze}" stroke-width="1.2"/>
+          <circle r="31" fill="none" stroke="${P.bronze}" stroke-width="0.5" opacity=".7"/>
+          ${pip(kind, 0, -1, 42, col, 1).replace(/transform="[^"]*"/, 'transform="translate(0 -1)"')}
+        </g>
+        <text x="70" y="154" text-anchor="middle" font-family="Cormorant Garamond, serif"
+          font-weight="600" font-size="8" letter-spacing="0.35em" fill="${P.bronze}">DEUX</text>
+      `;
     }
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"${size}>${frame(opts)}${inner}${deco}</svg>`;
+    return `<g transform="translate(70 100)">${pip(kind, 0, 0, 52, col, 1).replace(/transform="[^"]*"/, "")}</g>`;
   }
 
-  function fanCorner(rank, s) {
-    const color = sc(s);
-    if (rank === '10') {
-      return `<g><text x="3" y="28" text-anchor="start" font-family="${SERIF}" font-weight="700" font-size="18" fill="${color}" textLength="18" lengthAdjust="spacingAndGlyphs">10</text>${suit(s, 12, 48, 14)}</g>`;
+  function court(rank, kind, col) {
+    const label = { J: "JACK", Q: "QUEEN", K: "KING" }[rank];
+    const ornament = `
+      <g fill="none" stroke="${col}" stroke-width="1.05">
+        <rect x="38" y="36" width="64" height="128" rx="2"/>
+        <line x1="38" y1="100" x2="102" y2="100" stroke="${P.bronze}" stroke-width="0.7"/>
+      </g>
+      <text x="70" y="92" text-anchor="middle" font-family="Cormorant Garamond, serif"
+        font-weight="600" font-size="54" fill="${col}">${rank}</text>
+      <g transform="translate(70 58)">${pip(kind, 0, 0, 16, col, 1).replace(/transform="[^"]*"/, "")}</g>
+      <g transform="translate(70 142) rotate(180)">${pip(kind, 0, 0, 16, col, 1).replace(/transform="[^"]*"/, "")}</g>
+      <text x="70" y="116" text-anchor="middle" font-family="Cormorant Garamond, serif"
+        font-weight="500" font-size="7.5" letter-spacing="0.42em" fill="${P.bronze}">${label}</text>
+    `;
+    return ornament;
+  }
+
+  function cardSVG(rank, suit, opts) {
+    opts = opts || {};
+    const w = opts.width || 140;
+    const h = (w * 200) / 140;
+    if (rank === "BJ" || rank === "SJ") return jokerSVG(rank === "BJ", opts);
+    const kind = SUITS[suit].pip;
+    const col = color(suit, opts);
+    const pipSize = rank === "A" ? 0 : (rank === "10" || rank === "9") ? 16 : (rank === "7" || rank === "8") ? 18 : 21;
+    let body = "";
+    if (rank === "A") body = aceExtra(suit, kind, col);
+    else if (rank === "J" || rank === "Q" || rank === "K") body = court(rank, kind, col);
+    else {
+      body = LAYOUTS[rank]
+        .map(([x, y, f]) => pip(kind, x, y, pipSize, col, f))
+        .join("");
     }
-    return `<g><text x="12" y="30" text-anchor="middle" font-family="${SERIF}" font-weight="700" font-size="26" fill="${color}">${rank}</text>${suit(s, 12, 50, 16)}</g>`;
+    const marks =
+      (opts.level ? seal("级", 112, 24, P.bronze, P.paper) : "") +
+      (opts.wild ? seal("配", 112, 46, P.lacquer, P.paper, P.bronze) : "");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 200" width="${w}" height="${h}" role="img" aria-label="${rank}${suit}">
+      ${frame(opts)}
+      ${index(rank, kind, col, opts)}
+      ${body}
+      ${marks}
+    </svg>`;
   }
 
-  function fanJokerMark(big) {
-    const color = big ? P.cinnabar : P.ink;
-    const label = big ? '大' : '小';
-    return `<text x="13" y="30" text-anchor="middle" font-family="${SERIF}" font-size="24" font-weight="700" fill="${color}">${label}</text><text x="13" y="50" text-anchor="middle" font-family="${SERIF}" font-size="14" font-weight="700" fill="${color}">王</text>`;
-  }
-
-  function jokerSVG(big, opts) {
+  function jokerSVG(isBig, opts) {
     opts = opts || {};
-    const art = (opts.fan ? fanJokerMark(big) : '') + jokerArt(big);
-    return wrap(art, opts);
-  }
-
-  function cardSVG(rank, s, opts) {
-    rank = String(rank).toUpperCase();
-    opts = opts || {};
-    if (rank === 'BJ' || rank === 'SJ') return jokerSVG(rank === 'BJ', opts);
-    let mid = pips(rank, s);
-    if (rank === 'A') mid = ace(s);
-    else if ('JQK'.includes(rank)) mid = court(rank, s);
-    const face = (opts.fan ? fanCorner(rank, s) : corner(rank, s)) + mid;
-    return wrap(face, opts);
+    const w = opts.width || 140;
+    const h = (w * 200) / 140;
+    const col = isBig ? P.lacquer : P.ink;
+    const ring = isBig ? P.bronze : P.ink;
+    const title = isBig ? "大 王" : "小 王";
+    const sub = isBig ? "JOKER" : "JOKER";
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 200" width="${w}" height="${h}" role="img" aria-label="${title}">
+      ${frame(opts)}
+      <g fill="${col}">
+        <text x="16" y="28" text-anchor="middle" font-family="Noto Serif SC, serif" font-weight="700" font-size="16">${isBig ? "大" : "小"}</text>
+        <text x="16" y="46" text-anchor="middle" font-family="Noto Serif SC, serif" font-weight="700" font-size="16">王</text>
+      </g>
+      <g fill="${col}" transform="rotate(180 70 100)">
+        <text x="16" y="28" text-anchor="middle" font-family="Noto Serif SC, serif" font-weight="700" font-size="16">${isBig ? "大" : "小"}</text>
+        <text x="16" y="46" text-anchor="middle" font-family="Noto Serif SC, serif" font-weight="700" font-size="16">王</text>
+      </g>
+      <g transform="translate(70 100)" fill="none" stroke="${ring}" stroke-width="1.4">
+        <circle cx="-12" cy="0" r="28"/>
+        <circle cx="12" cy="0" r="28"/>
+      </g>
+      <text x="70" y="152" text-anchor="middle" font-family="Cormorant Garamond, serif"
+        font-weight="600" font-size="9" letter-spacing="0.38em" fill="${col}">${sub}</text>
+      <text x="70" y="64" text-anchor="middle" font-family="Noto Serif SC, serif"
+        font-weight="600" font-size="13" letter-spacing="0.45em" fill="${col}">${title}</text>
+    </svg>`;
   }
 
   function backSVG(opts) {
     opts = opts || {};
-    const size = opts.width ? ` width="${opts.width}" height="${Math.round(opts.width / 0.7)}"` : '';
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}"${size}>
-      <rect x="1.2" y="1.2" width="137.6" height="197.6" rx="10" fill="${P.paper}" stroke="${P.ink}" stroke-width="1.6"/>
-      <rect x="7" y="7" width="126" height="186" rx="6" fill="${P.ink}"/>
-      <rect x="11" y="11" width="118" height="178" rx="4" fill="#F4EFE4"/>
-      <path d="M11 128 C40 96 58 112 78 100 C100 86 112 104 129 92 V189 H11Z" fill="${P.ink}" opacity=".1"/>
-      <path d="M11 150 C48 128 70 146 96 132 C112 122 120 138 129 130 V189 H11Z" fill="${P.ink}" opacity=".08"/>
-      <g fill="none" stroke="${P.ink}" stroke-linecap="round" opacity=".55">
-        <path d="M112 168V78" stroke-width="2"/><path d="M112 96H104M112 118H120M112 140H106" stroke-width="1.3"/>
-        <path d="M112 84c8-10 16-6 12 2" stroke="${P.bamboo}" stroke-width="1.4"/>
+    const w = opts.width || 140;
+    const h = (w * 200) / 140;
+    const id = uid("back");
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 200" width="${w}" height="${h}" role="img" aria-label="DEUX back">
+      <rect x="0" y="0" width="140" height="200" rx="12" fill="${P.ivory}"/>
+      <rect x="3" y="3" width="134" height="194" rx="10" fill="${P.paper}" stroke="${P.bronze}" stroke-width="1.6"/>
+      <rect x="8" y="8" width="124" height="184" rx="7" fill="none" stroke="${P.ink}" stroke-width="0.5" opacity=".35"/>
+      <g transform="translate(70 100)" fill="none" stroke="${P.bronze}" stroke-width="1.5">
+        <circle cx="-16" cy="0" r="34"/>
+        <circle cx="16" cy="0" r="34"/>
       </g>
-      <rect x="48" y="70" width="44" height="52" fill="#F4EFE4" stroke="${P.cinnabar}" stroke-width="1.8"/>
-      <text x="70" y="94" text-anchor="middle" font-family="${SERIF}" font-size="16" font-weight="700" fill="${P.cinnabar}">掼</text>
-      <text x="70" y="114" text-anchor="middle" font-family="${SERIF}" font-size="16" font-weight="700" fill="${P.cinnabar}">蛋</text>
+      <text x="70" y="36" text-anchor="middle" font-family="Cormorant Garamond, serif"
+        font-weight="600" font-size="10" letter-spacing="0.42em" fill="${P.bronze}">DEUX</text>
+      <text x="70" y="174" text-anchor="middle" font-family="Cormorant Garamond, serif"
+        font-weight="600" font-size="10" letter-spacing="0.42em" fill="${P.bronze}" transform="rotate(180 70 168)">DEUX</text>
     </svg>`;
   }
 
-  const api = { cardSVG, backSVG, jokerSVG, PALETTE: P, SUIT_PATH, SERIF, CARD_VIEWBOX: [W, H] };
-  if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.GuanDanCards = api;
-})(typeof window !== 'undefined' ? window : globalThis);
+  return { PALETTE: P, SUITS, RANKS, cardSVG, jokerSVG, backSVG };
+});

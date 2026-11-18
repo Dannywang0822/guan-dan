@@ -34,6 +34,15 @@ button { cursor: pointer; }
 
 button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; }
 
+.font-prime {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  font-family: "Cormorant Garamond", "Noto Serif SC", serif;
+  font-weight: 700;
+}
+
 #app {
   height: 100dvh;
   display: flex;
@@ -455,38 +464,160 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 28px 16px 32px;
+  width: min(100%, 430px);
+  margin: 0 auto;
+  padding: calc(28px + env(safe-area-inset-top)) 22px 28px;
   text-align: center;
   position: relative;
+  background: #F4EFE6;
+  color: #12110F;
+  transition: opacity .45s cubic-bezier(.4, 0, .2, 1), transform .7s cubic-bezier(.65, 0, .35, 1);
 }
 
-.start > :not(.wash) { position: relative; z-index: 1; }
+.start.exit {
+  opacity: 0;
+  transform: scale(.92) translateY(-18px);
+  pointer-events: none;
+}
+
+.start > :not(.start-wave) { position: relative; z-index: 1; }
+
+.start-wave {
+  position: absolute;
+  left: -10%;
+  right: -10%;
+  bottom: -8%;
+  height: 28%;
+  background: radial-gradient(120% 80% at 50% 100%, rgba(18, 17, 15, .06), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
 
 .kicker {
-  margin: 8px 0 0;
-  letter-spacing: 0.18em;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 700;
+  margin: 0;
+  font-family: "Cormorant Garamond", "Noto Serif SC", serif;
+  letter-spacing: .42em;
+  font-size: 11px;
+  color: #B08A4F;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
 .start h1 {
-  margin: 0;
-  font-family: var(--brush);
+  margin: 10px 0 8px 14px;
+  font-family: "Noto Serif SC", serif;
   font-size: 72px;
-  font-weight: 400;
+  font-weight: 700;
   line-height: 1;
-  letter-spacing: 0.12em;
+  letter-spacing: .16em;
+  color: #12110F;
 }
 
-.lead { max-width: 28em; margin: 8px 0; line-height: 1.6; }
+.lead {
+  max-width: 28em;
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  letter-spacing: .06em;
+  color: #6B6560;
+}
 
-.fan { display: flex; align-items: flex-end; justify-content: center; height: 168px; margin: 4px 0; }
-.fan-card { width: 86px; filter: drop-shadow(0 8px 10px rgba(28, 28, 28, 0.18)); }
-.tilt-l { transform: rotate(-9deg) translateY(8px); }
-.tilt-r { transform: rotate(9deg) translateY(8px); }
+.home-fan {
+  position: relative;
+  width: 260px;
+  height: 168px;
+  margin-bottom: 22px;
+  flex: 0 0 auto;
+}
 
-.diff-head { margin: 8px 0; font-weight: 700; letter-spacing: 0.28em; font-size: 13px; }
+.home-mini {
+  position: absolute;
+  width: 96px;
+  height: 140px;
+  background: #FBF8F2;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(18, 17, 15, .14);
+  border: 1px solid rgba(18, 17, 15, .16);
+  display: flex;
+  flex-direction: column;
+  padding: 8px 8px 10px;
+  left: 50%;
+  top: 8px;
+  transform-origin: 50% 120%;
+}
+
+.home-mini.a { transform: translateX(-118px) rotate(-18deg); }
+.home-mini.b {
+  transform: translateX(-48px) rotate(0deg);
+  z-index: 2;
+  background: #F7EDEA;
+  border-color: rgba(139, 30, 30, .35);
+}
+.home-mini.c { transform: translateX(22px) rotate(18deg); }
+.home-mini .idx {
+  font-family: "Cormorant Garamond", serif;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+  text-align: left;
+  color: #12110F;
+}
+.home-mini .idx.red,
+.home-mini .pip.red { color: #8B1E1E; }
+.home-mini .pip {
+  margin: auto;
+  text-align: center;
+  font-size: 28px;
+  line-height: 1;
+  color: #12110F;
+}
+.home-mini .joker-mark {
+  margin: auto;
+  width: 36px;
+  height: 36px;
+  border: 1.4px solid #12110F;
+  border-radius: 50%;
+  position: relative;
+}
+.home-mini .joker-mark::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1.2px solid #B08A4F;
+  border-radius: 50%;
+}
+.home-mini .cn {
+  font-size: 10px;
+  letter-spacing: .2em;
+  text-align: center;
+  color: #12110F;
+}
+
+.deux-opening {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: auto;
+  display: flex;
+  justify-content: center;
+}
+
+.deux-stage {
+  position: relative;
+  width: min(100%, 430px);
+  height: 100%;
+  overflow: hidden;
+}
+
+.deux-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.diff-head { margin: 0 0 12px; font-weight: 600; letter-spacing: 0.28em; font-size: 12px; color: #6B6560; }
 .diff-grid { width: min(880px, 100%); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .diff-card {
   position: relative;
@@ -511,8 +642,68 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
   font-weight: 900;
   padding: 0 4px;
 }
-.diff-note { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
-.start-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.diff-note { color: #6B6560; font-size: 11px; margin: 6px 0 22px; letter-spacing: .04em; }
+.start .diff-grid { width: 100%; }
+.start .diff-card {
+  text-align: center;
+  min-height: 0;
+  padding: 12px 8px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(18, 17, 15, .12);
+  background: rgba(255, 255, 255, .28);
+}
+.start .diff-card b { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.start .diff-card span { font-size: 10px; line-height: 1.5; font-weight: 500; color: #6B6560; letter-spacing: .02em; }
+.start .diff-card.on {
+  border-color: #8B1E1E;
+  background: #fff;
+  box-shadow: 0 0 0 1px #8B1E1E;
+}
+.start .diff-card.on::after { content: none; }
+.start .diff-card.on::before {
+  content: "当前";
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #8B1E1E;
+  color: #fff;
+  font-size: 9px;
+  letter-spacing: .12em;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 2px;
+}
+.start-actions {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  margin-top: auto;
+  padding-bottom: 8px;
+  flex-wrap: nowrap;
+  justify-content: stretch;
+}
+.start-actions .btn {
+  flex: 1;
+  height: 48px;
+  min-height: 48px;
+  border-radius: 24px;
+  font-family: "Noto Serif SC", serif;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: .18em;
+}
+.start-actions .btn.ghost {
+  background: transparent;
+  border: 1.5px solid #12110F;
+  color: #12110F;
+}
+.start-actions .btn.play {
+  background: #8B1E1E;
+  border-color: #8B1E1E;
+  color: #F4EFE6;
+  box-shadow: 0 8px 18px rgba(139, 30, 30, .28);
+}
 
 .toast {
   position: absolute;
@@ -531,7 +722,6 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
 }
 
 @media (min-width: 800px) {
-  .start h1 { font-size: 96px; }
   .btn { min-width: 84px; }
 }
 

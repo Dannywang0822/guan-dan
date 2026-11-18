@@ -20,12 +20,13 @@ import {
   sortCards,
   arrangeGroups,
   upgradeSteps,
-} from '../js/engine.js?v=8';
-import { chooseMove } from '../js/ai.js?v=8';
-import { straightPlanPenalty } from '../js/policy.js?v=8';
-import { Match, unplayedPool } from '../js/controller.js?v=8';
-import { cardMetrics, handLayout, twoRowLayout, ARRANGE } from '../js/ui.js?v=8';
-import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=8';
+} from '../js/engine.js?v=9';
+import { chooseMove } from '../js/ai.js?v=9';
+import { straightPlanPenalty } from '../js/policy.js?v=9';
+import { Match, unplayedPool } from '../js/controller.js?v=9';
+import { cardMetrics, handLayout, renderCard, twoRowLayout, ARRANGE } from '../js/ui.js?v=9';
+import { OPENING_MS, openingSample, ringSpinSign } from '../js/opening.js?v=9';
+import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=9';
 import {
   composeVerdict,
   fanHitIndex,
@@ -33,7 +34,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from '../js/portrait.js?v=8';
+} from '../js/portrait.js?v=9';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -413,22 +414,27 @@ check('card art marks level and wild', () => {
   const jack = cardSVG('J', 'S', { width: 60 });
   assert.ok(jack.includes('<svg'));
   assert.equal(jack.includes('小王'), false);
+  assert.ok(jack.includes('JACK'));
   const small = cardSVG('SJ');
   assert.ok(small.includes('小 王'));
   const big = cardSVG('BJ');
   assert.ok(big.includes('大 王'));
   const level = cardSVG('2', 'S', { level: true, width: 60 });
   assert.ok(level.includes('级'));
-  const wild = cardSVG('2', 'H', { level: true, wild: true, width: 60 });
+  assert.ok(level.toLowerCase().includes('#b08a4f'));
+  const wild = cardSVG('2', 'H', { wild: true, width: 60 });
   assert.ok(wild.includes('配'));
-  assert.ok(wild.includes('#F6E4D0') || wild.includes('#f6e4d0'));
+  assert.ok(wild.includes('#F7EDEA') || wild.includes('#f7edea'));
   assert.equal(wild.includes('级'), false);
   const heart = cardSVG('A', 'H', { width: 66 });
-  assert.ok(heart.toLowerCase().includes('#8c3a3a'));
-  assert.ok(jack.toLowerCase().includes('#1c1c1c'));
+  assert.ok(heart.toLowerCase().includes('#8b1e1e'));
+  assert.ok(jack.toLowerCase().includes('#12110f'));
   assert.equal(jack.includes('兔'), false);
-  assert.equal(backSVG({ width: 30 }).includes('兔'), false);
-  assert.ok(backSVG({ width: 30 }).includes('<svg'));
+  const back = backSVG({ width: 30 });
+  assert.equal(back.includes('兔'), false);
+  assert.equal(back.includes('掼'), false);
+  assert.ok(back.includes('DEUX'));
+  assert.ok(back.includes('<svg'));
 });
 
 check('phone hand step', () => {
@@ -912,16 +918,64 @@ check('mnemonic: upstream single is topped, memory saves a dead ace pair', () =>
 
 check('fan ten stays in the left peek', () => {
   const ten = cardSVG('10', 'H', { fan: true, width: 54, level: true });
-  assert.ok(ten.includes('textLength="18"'), ten);
+  assert.ok(ten.includes('>10<'), ten);
   assert.ok(ten.includes('级'));
-  assert.ok(ten.includes('translate(13 74)'));
-  assert.equal(ten.includes('translate(118'), false);
+  assert.ok(ten.includes('x="16"'), 'left index stays in the overlapped strip');
   const wild = cardSVG('2', 'H', { fan: true, wild: true, width: 54 });
   assert.ok(wild.includes('配'));
-  assert.ok(wild.includes('translate(13 74)'));
+  assert.ok(wild.includes('#F7EDEA') || wild.includes('#f7edea'));
+  assert.equal(wild.includes('级'), false);
   const plain = cardSVG('10', 'S', { width: 54 });
-  assert.ok(plain.includes('textLength="26"'));
-  assert.ok(plain.includes('translate(118 78)') === false || plain.includes('级') === false);
+  assert.ok(plain.includes('>10<'));
+  assert.equal(plain.includes('级'), false);
+  assert.equal(plain.includes('配'), false);
+});
+
+check('level and wild flags reach the renderer', () => {
+  const level = renderCard({ rank: '2', suit: 'S', id: 1 }, '2', { width: 60 });
+  assert.ok(level.includes('级'));
+  assert.equal(level.includes('配'), false);
+  assert.ok(level.toLowerCase().includes('#b08a4f'));
+  const wild = renderCard({ rank: '2', suit: 'H', id: 2 }, '2', { width: 60 });
+  assert.ok(wild.includes('配'));
+  assert.equal(wild.includes('级'), false);
+  assert.ok(wild.includes('#F7EDEA') || wild.includes('#f7edea'));
+  const heartAce = renderCard({ rank: 'A', suit: 'H', id: 3 }, 'A', { width: 70 });
+  assert.ok(heartAce.includes('配'));
+  assert.equal(heartAce.includes('级'), false);
+  const plain = renderCard({ rank: '3', suit: 'H', id: 4 }, '2', { width: 60 });
+  assert.equal(plain.includes('级'), false);
+  assert.equal(plain.includes('配'), false);
+  const joker = renderCard({ rank: 'BJ', suit: 'J', id: 5 }, '2', { width: 60 });
+  assert.ok(joker.includes('大 王'));
+  assert.equal(joker.includes('级'), false);
+  assert.equal(joker.includes('配'), false);
+  const back = renderCard(null, '2', { width: 40 });
+  assert.ok(back.includes('DEUX'));
+});
+
+check('opening is 4000ms before the first table', () => {
+  assert.equal(OPENING_MS, 4000);
+  assert.equal(openingSample(0).table, false);
+  assert.equal(openingSample(3999).table, false);
+  assert.equal(openingSample(4000).table, true);
+  assert.equal(openingSample(5000).p, 1);
+  const rings = openingSample(900);
+  const orbit = openingSample(1600);
+  const flip = openingSample(2100);
+  const lock = openingSample(2600);
+  const deal = openingSample(3400);
+  assert.ok(rings.ringDraw > 0.45, rings.ringDraw);
+  assert.ok(Math.abs(rings.deal) < 1e-9);
+  assert.ok(orbit.orbitIn > rings.orbitIn);
+  assert.ok(orbit.spin > rings.spin);
+  assert.ok(flip.flip > 0.4, flip.flip);
+  assert.ok(lock.slam > 0.5, lock.slam);
+  assert.ok(lock.impact > 0 && lock.word > 0);
+  assert.ok(deal.deal > lock.deal);
+  assert.ok(deal.deal > 0.15, deal.deal);
+  assert.equal(ringSpinSign(0), 1);
+  assert.equal(ringSpinSign(1), -1);
 });
 
 function blocks(items) {
