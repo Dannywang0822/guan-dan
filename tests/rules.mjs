@@ -17,10 +17,11 @@ import {
   planTribute,
   powerValue,
   upgradeSteps,
-} from '../js/engine.js?v=6';
-import { chooseMove } from '../js/ai.js?v=6';
-import { Match, unplayedPool } from '../js/controller.js?v=6';
-import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=6';
+} from '../js/engine.js?v=7';
+import { chooseMove } from '../js/ai.js?v=7';
+import { straightPlanPenalty } from '../js/policy.js?v=7';
+import { Match, unplayedPool } from '../js/controller.js?v=7';
+import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=7';
 import {
   composeVerdict,
   fanHitIndex,
@@ -28,7 +29,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from '../js/portrait.js?v=6';
+} from '../js/portrait.js?v=7';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -540,8 +541,8 @@ check('public cards are remembered without exposing hands', () => {
   assert.equal(m.seats[2].hand.length, 2);
 });
 
-check('easy and sharp stay legal', () => {
-  for (const difficulty of ['easy', 'sharp']) {
+check('easy, balanced and sharp stay legal', () => {
+  for (const difficulty of ['easy', 'balanced', 'sharp']) {
     const m = new Match();
     m.setDifficulty(difficulty);
     m.startMatch();
@@ -675,6 +676,234 @@ check('compose types, wilds and must beat', () => {
   const auto = composeVerdict(pair, '2', null, null);
   assert.equal(auto.canPlay, true);
   assert.ok(auto.text.includes('对子'), auto.text);
+});
+
+function policyCtx(over = {}) {
+  const lengths = over.lengths || [20, 20, 20, 20];
+  return {
+    difficulty: 'sharp',
+    seat: 0,
+    partner: 2,
+    downstream: 1,
+    upstream: 3,
+    lengths,
+    myLen: lengths[0],
+    partnerLen: lengths[2],
+    opponentMin: Math.min(...[lengths[1], lengths[3]].filter((n) => n > 0), 99),
+    partnerWinning: false,
+    headDecided: false,
+    headSeat: null,
+    trickWinner: null,
+    played: [],
+    knownElsewhere: [],
+    finishes: [null, null, null, null],
+    ...over,
+  };
+}
+
+function dealt(specs) {
+  return take(createDeck(), specs);
+}
+
+check('mnemonic: stingy wild, unclear pair, straight stays at five', () => {
+  for (const difficulty of ['balanced', 'sharp']) {
+    const hand = dealt([
+      ['8', 'S'], ['8', 'C'], ['8', 'D'],
+      ['2', 'H'],
+      ['4', 'S'], ['5', 'C'], ['6', 'D'], ['7', 'S'],
+      ['9', 'S'], ['9', 'C'],
+      ['J', 'D'],
+    ]);
+    const lead = chooseMove(hand, '2', null, policyCtx({ difficulty, myLen: hand.length }));
+    assert.equal(lead.type, 'pair', difficulty);
+    assert.ok(lead.cards.every((c) => c.rank === '9'), difficulty);
+    assert.equal(lead.cards.some((c) => c.rank === '2' && c.suit === 'H'), false);
+
+    const followHand = dealt([
+      ['8', 'S'], ['8', 'C'], ['8', 'D'],
+      ['2', 'H'],
+      ['4', 'S'], ['4', 'C'],
+      ['9', 'D'], ['K', 'S'],
+    ]);
+    const pair3 = identify(dealt([['3', 'S'], ['3', 'C']]), '2')[0];
+    const beat = chooseMove(followHand, '2', pair3, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [followHand.length, 18, 18, 18],
+    }));
+    assert.equal(beat.type, 'pair', difficulty);
+    assert.equal(beat.cards.some((c) => c.suit === 'H' && c.rank === '2'), false);
+
+    const seedOnly = dealt([
+      ['7', 'S'], ['7', 'C'], ['7', 'D'],
+      ['2', 'H'],
+      ['5', 'D'], ['J', 'C'], ['Q', 'S'], ['K', 'D'],
+    ]);
+    const passed = chooseMove(seedOnly, '2', pair3, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [seedOnly.length, 18, 18, 18],
+    }));
+    assert.equal(passed, null, difficulty);
+  }
+  const six = { type: 'straight', cards: [1, 2, 3, 4, 5, 6], rank: 8 };
+  const five = { type: 'straight', cards: [1, 2, 3, 4, 5], rank: 7 };
+  assert.ok(straightPlanPenalty(six) > straightPlanPenalty(five));
+  assert.equal(straightPlanPenalty(six, { finishing: true }), 0);
+  const run = createDeck();
+  const long = take(run, [
+    ['3', 'S'], ['4', 'D'], ['5', 'C'], ['6', 'S'], ['7', 'D'], ['8', 'C'],
+    ['J', 'S'], ['J', 'C'],
+  ]);
+  const planned = chooseMove(long, '2', null, policyCtx());
+  assert.equal(planned.type, 'pair');
+  assert.ok(planned.cards.length <= 5);
+  assert.notEqual(planned.type === 'straight' && planned.cards.length > 5, true);
+});
+
+check('mnemonic: bomb a threatening straight, not a teammate going out', () => {
+  for (const difficulty of ['balanced', 'sharp']) {
+    const straight = identify(dealt([['8', 'S'], ['9', 'D'], ['10', 'C'], ['J', 'S'], ['Q', 'D']]), '2')[0];
+    const bombHand = () => dealt([['6', 'S'], ['6', 'H'], ['6', 'C'], ['6', 'D'], ['3', 'S'], ['4', 'D'], ['K', 'S']]);
+    const fire = chooseMove(bombHand(), '2', straight, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [12, 2, 16, 16],
+    }));
+    assert.equal(fire.type, 'bomb', difficulty);
+    const quiet = chooseMove(bombHand(), '2', straight, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [12, 18, 16, 16],
+    }));
+    assert.equal(quiet, null, difficulty);
+    const spare = chooseMove(bombHand(), '2', straight, policyCtx({
+      difficulty,
+      partnerWinning: true,
+      trickWinner: 2,
+      lengths: [12, 16, 1, 16],
+      partnerLen: 1,
+    }));
+    assert.equal(spare, null, difficulty);
+  }
+});
+
+check('mnemonic: 保一争二 feeds partner once head is decided', () => {
+  for (const difficulty of ['balanced', 'sharp']) {
+    const strong = () => dealt([
+      ['8', 'S'], ['8', 'H'], ['8', 'C'], ['8', 'D'],
+      ['4', 'S'], ['4', 'C'],
+      ['3', 'D'], ['9', 'S'], ['K', 'H'],
+    ]);
+    const chase = chooseMove(strong(), '2', null, policyCtx({
+      difficulty,
+      headDecided: false,
+      lengths: [9, 12, 4, 12],
+    }));
+    assert.equal(chase.type, 'single', difficulty);
+    assert.equal(chase.cards[0].rank, '3');
+    const help = chooseMove(strong(), '2', null, policyCtx({
+      difficulty,
+      headDecided: true,
+      headSeat: 1,
+      lengths: [9, 12, 4, 12],
+    }));
+    assert.equal(help.type, 'pair', difficulty);
+    assert.ok(help.cards.every((c) => c.rank === '4'));
+  }
+});
+
+check('mnemonic: remaining counts top a single, bomb five, pair against seven-eight', () => {
+  for (const difficulty of ['balanced', 'sharp']) {
+    const single5 = identify(dealt([['5', 'S']]), '2')[0];
+    const toppers = dealt([['4', 'D'], ['7', 'S'], ['K', 'H'], ['9', 'S'], ['9', 'C'], ['3', 'D'], ['J', 'S']]);
+    const top = chooseMove(toppers, '2', single5, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [10, 1, 18, 16],
+    }));
+    assert.equal(top.type, 'single', difficulty);
+    assert.equal(top.cards[0].rank, 'K');
+
+    const house = identify(dealt([['3', 'S'], ['3', 'H'], ['3', 'C'], ['4', 'S'], ['4', 'H']]), '2')[0];
+    const armed = dealt([['6', 'S'], ['6', 'H'], ['6', 'C'], ['6', 'D'], ['8', 'D'], ['Q', 'S'], ['K', 'C']]);
+    const boom = chooseMove(armed, '2', house, policyCtx({
+      difficulty,
+      trickWinner: 1,
+      lengths: [10, 0, 18, 16],
+    }));
+    assert.equal(boom.type, 'bomb', difficulty);
+
+    const holding = dealt([['7', 'S'], ['7', 'H'], ['7', 'C'], ['7', 'D'], ['4', 'C'], ['4', 'D'], ['3', 'H'], ['9', 'D']]);
+    const probe = chooseMove(holding, '2', null, policyCtx({
+      difficulty,
+      lengths: [10, 5, 18, 16],
+    }));
+    assert.equal(probe.type, 'pair', difficulty);
+    assert.notEqual(probe.type, 'bomb');
+
+    const tube = identify(dealt([
+      ['3', 'S'], ['3', 'D'], ['4', 'S'], ['4', 'D'], ['5', 'S'], ['5', 'D'],
+    ]), '9')[0];
+    assert.equal(tube.type, 'tube');
+    const stopper = dealt([['9', 'S'], ['9', 'H'], ['9', 'C'], ['9', 'D'], ['8', 'S'], ['Q', 'D'], ['K', 'D']]);
+    const answer = chooseMove(stopper, '9', tube, policyCtx({
+      difficulty,
+      trickWinner: 3,
+      lengths: [12, 16, 18, 2],
+    }));
+    assert.equal(answer.type, 'bomb', difficulty);
+
+    const splitter = dealt([
+      ['8', 'S', 1], ['8', 'H', 1], ['8', 'C', 1], ['8', 'D', 1],
+      ['3', 'C'], ['4', 'H'], ['5', 'H'], ['6', 'C'], ['7', 'H'],
+      ['9', 'H'], ['9', 'C'],
+    ]);
+    const pairs = chooseMove(splitter, '2', null, policyCtx({
+      difficulty,
+      lengths: [14, 8, 18, 16],
+    }));
+    assert.equal(pairs.type, 'pair', difficulty);
+    assert.ok(pairs.cards.every((c) => c.rank === '9'));
+  }
+});
+
+check('mnemonic: upstream single is topped, memory saves a dead ace pair', () => {
+  const single4 = identify(dealt([['4', 'S']]), '2')[0];
+  const hand = dealt([['6', 'D'], ['8', 'C'], ['K', 'S'], ['9', 'S'], ['9', 'H'], ['3', 'C']]);
+  const topped = chooseMove(hand, '2', single4, policyCtx({
+    trickWinner: 3,
+    lengths: [12, 16, 16, 16],
+  }));
+  assert.equal(topped.type, 'single');
+  assert.equal(topped.cards[0].rank, 'K');
+
+  const memoryHand = dealt([
+    ['2', 'S'], ['2', 'C'],
+    ['3', 'S'], ['4', 'C'], ['5', 'D'], ['6', 'S'], ['7', 'C'], ['8', 'D'],
+    ['9', 'C'], ['10', 'S'], ['J', 'H'], ['Q', 'C'], ['K', 'D'], ['A', 'S'],
+  ]);
+  const pairA = identify(dealt([['A', 'C'], ['A', 'D']]), '2')[0];
+  const played = [];
+  for (const rank of ['SJ', 'BJ']) {
+    played.push({ id: played.length + 1, rank, suit: 'J', deck: 0 });
+    played.push({ id: played.length + 1, rank, suit: 'J', deck: 1 });
+  }
+  for (const suit of ['S', 'H', 'C', 'D']) {
+    played.push({ id: played.length + 80, rank: '2', suit, deck: 1 });
+  }
+  played.push({ id: 90, rank: '2', suit: 'H', deck: 0 }, { id: 91, rank: '2', suit: 'D', deck: 0 });
+  const base = {
+    trickWinner: 1,
+    lengths: [memoryHand.length, 20, 20, 20],
+    played,
+    knownElsewhere: [],
+  };
+  const sharp = chooseMove(memoryHand, '2', pairA, policyCtx({ ...base, difficulty: 'sharp' }));
+  const balanced = chooseMove(memoryHand, '2', pairA, policyCtx({ ...base, difficulty: 'balanced' }));
+  assert.equal(sharp, null);
+  assert.equal(balanced.type, 'pair');
+  assert.ok(balanced.cards.every((c) => c.rank === '2'));
 });
 
 check('fan ten stays in the left peek', () => {

@@ -14,7 +14,7 @@ import {
   typeLabel,
   upgradeSteps,
   isBombType,
-} from './engine.js?v=6';
+} from './engine.js?v=7';
 
 const NAMES = ['你', '下家', '对家', '上家'];
 const STAMPS = ['我', '下', '对', '上'];
@@ -406,16 +406,28 @@ export class Match {
 
   aiContext(seat) {
     const partner = (seat + 2) % 4;
-    const foes = [(seat + 1) % 4, (seat + 3) % 4]
-      .map((id) => this.seats[id].hand.length)
-      .filter((n) => n > 0);
+    const downstream = (seat + 1) % 4;
+    const upstream = (seat + 3) % 4;
+    const lengths = this.seats.map((s) => s.hand.length);
+    const foes = [downstream, upstream].map((id) => lengths[id]).filter((n) => n > 0);
     const known = this.known || [];
+    const winner = this.trick ? this.trick.winner : null;
     return {
       difficulty: this.difficulty || 'balanced',
-      partnerWinning: this.trick?.winner === partner,
+      seat,
+      partner,
+      downstream,
+      upstream,
+      partnerWinning: winner === partner,
       opponentMin: foes.length ? Math.min(...foes) : 99,
-      partnerLen: this.seats[partner].hand.length,
-      myLen: this.seats[seat].hand.length,
+      partnerLen: lengths[partner],
+      myLen: lengths[seat],
+      lengths,
+      finishes: this.seats.map((s) => s.finish),
+      headDecided: (this.finishOrder || []).length > 0,
+      headSeat: (this.finishOrder || [])[0] ?? null,
+      trickWinner: winner,
+      trickLead: this.trick ? this.trick.lead : null,
       played: known.filter((card) => card.place === 'table'),
       knownElsewhere: known.filter((card) => card.place !== 'table' && card.place !== seat),
     };

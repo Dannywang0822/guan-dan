@@ -1,4 +1,4 @@
-import { unplayedPool } from './controller.js?v=6';
+import { unplayedPool } from './controller.js?v=7';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
@@ -12,8 +12,8 @@ import {
   sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=6';
-import { chooseMove, listSuggestions } from './ai.js?v=6';
+} from './engine.js?v=7';
+import { chooseMove, listSuggestions } from './ai.js?v=7';
 import {
   COMPOSE_TYPES,
   chipTypeForCombo,
@@ -23,15 +23,15 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from './portrait.js?v=6';
+} from './portrait.js?v=7';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
 const TONE = ['gold', 'cinnabar', 'bamboo', 'slate'];
 const DIFFS = [
   ['easy', '轻松', '合法跟牌，偏出小牌。'],
-  ['balanced', '均衡', '尽量出小牌型、留炸弹，队友大牌一般不压。'],
-  ['sharp', '精算', '记公开牌，配合让牌与拦截，炸弹时机更稳，残局算手数。'],
+  ['balanced', '均衡', '按实战口诀出牌：对子先行，逢人配留作炸，队友大牌不压。'],
+  ['sharp', '精算', '口诀更严，并记已出的王、二、级牌和缺门。'],
 ];
 const ARRANGE = {
   rank: {
@@ -1188,7 +1188,7 @@ class UI {
           <p>理牌在点数、花色、牌型之间切换，规则条会留在牌桌上。选中手牌时，条上写出这种牌型怎么比。例如顺子固定 5 张，按牌面点数衔接，级牌不另算。竖屏手机上手牌叠成一排，点一下会抬起，并在上方放大看清牌面。可以先点牌型再自由组合，不合这种牌型或压不过时不能出牌。</p>
           <p>记牌器在任一家手牌少于 10 张时自动打开，也可以随时点「记牌」。它只显示四家剩余张数，以及还没打出的花色和点数，不亮别人的具体手牌。收起之后可以再打开。</p>
           <h3>电脑难度</h3>
-          <p>开局选定轻松、均衡或精算，三家电脑同一档，设置里可以改。轻松合法跟牌、偏出小牌。均衡尽量出小牌型、留炸弹，队友的大牌一般不压。精算会记已经打出的公开牌，配合让牌和拦截，炸弹出手更稳，残局按手数取舍。</p>
+          <p>开局选定轻松、均衡或精算，三家电脑同一档，设置里可以改。轻松合法跟牌、偏出小牌。均衡和精算按实战口诀选牌：惜用逢人配，残局按对手张数防，炸弹留给能决定一局的那一手。精算还会记已经打出的王、二、级牌和缺门。</p>
           <div class="sheet-actions"><button type="button" class="btn ghost" data-act="close-rules">知道了</button></div>
         </div>
       </div>`;
