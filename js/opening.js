@@ -71,6 +71,22 @@ export const OPENING_FACES = [
 
 const RASTER_W = 280;
 const RASTER_H = 400;
+export const OPENING_COLUMN = 430;
+/** Raster work runs on the home screen. The click path never waits for it. */
+export const RASTER_BLOCKS_CLOCK = false;
+
+let artPromise = null;
+let artCache = null;
+
+export function openingArtState() {
+  if (artCache) return 'ready';
+  if (artPromise) return 'pending';
+  return 'idle';
+}
+
+export function preparedOpeningArt() {
+  return artCache;
+}
 
 export function openingCardSVG(face) {
   const api = globalThis.DeuxCards || globalThis.GuanDanCards;
@@ -149,6 +165,27 @@ async function rasterizeOpeningCards() {
   return { back, faces };
 }
 
+/** Start rasterizing while the home screen loads. Safe to call more than once. */
+export function prepareOpeningArt() {
+  if (artPromise) return artPromise;
+  if (typeof document === 'undefined' || typeof Image === 'undefined') {
+    artPromise = Promise.resolve(null);
+    return artPromise;
+  }
+  if (typeof document !== 'undefined') document.documentElement.dataset.openingArt = 'pending';
+  artPromise = rasterizeOpeningCards().then((art) => {
+    if (art?.back || art?.faces?.some((face) => face.canvas)) artCache = art;
+    if (typeof document !== 'undefined') {
+      document.documentElement.dataset.openingArt = artCache ? 'ready' : 'failed';
+    }
+    return artCache;
+  }).catch(() => {
+    if (typeof document !== 'undefined') document.documentElement.dataset.openingArt = 'failed';
+    return null;
+  });
+  return artPromise;
+}
+
 /**
  * Play the opening over `app`. Calls onReveal at 3130ms so the real table can
  * fade in under the canvas, and resolves at 4000ms. The layer stays until the
@@ -195,10 +232,11 @@ export function playOpening(app, { sound = true, onReveal } = {}) {
     let audioCtx = null;
 
     function resize() {
-      const r = stage.getBoundingClientRect();
+      const appW = app.clientWidth || stage.getBoundingClientRect().width;
+      const appH = app.clientHeight || stage.getBoundingClientRect().height;
       dpr = Math.min(window.devicePixelRatio || 1, 2.5);
-      W = r.width;
-      H = r.height;
+      W = Math.min(appW, OPENING_COLUMN);
+      H = appH;
       canvas.width = Math.round(W * dpr);
       canvas.height = Math.round(H * dpr);
       canvas.style.width = `${W}px`;
@@ -399,10 +437,11 @@ export function playOpening(app, { sound = true, onReveal } = {}) {
         ctx.restore();
       }
 
+      const base = 'translateX(-50%)';
       if (p > 1.5 / 2.4 && p < 1.62 / 2.4) {
-        canvas.style.transform = `translate(${(Math.random() - 0.5) * 4}px, ${(Math.random() - 0.5) * 3}px)`;
+        canvas.style.transform = `${base} translate(${(Math.random() - 0.5) * 4}px, ${(Math.random() - 0.5) * 3}px)`;
       } else {
-        canvas.style.transform = '';
+        canvas.style.transform = base;
       }
 
       if (p >= 1) {
@@ -414,38 +453,30 @@ export function playOpening(app, { sound = true, onReveal } = {}) {
       requestAnimationFrame(frame);
     }
 
-    window.addEventListener('resize', resize);
-    if (home) void home.offsetWidth;
-
-    const boot = async () => {
-      let art = null;
-      try {
-        art = await Promise.race([
-          rasterizeOpeningCards(),
-          new Promise((finish) => setTimeout(() => finish(null), 1500)),
-        ]);
-      } catch {
-        art = null;
-      }
-      backCanvas = art?.back || null;
-      const faces = art?.faces?.length ? art.faces : OPENING_FACES;
+    function applyArt(art) {
+      if (!art) return;
+      backCanvas = art.back || null;
+      const faces = art.faces?.length ? art.faces : OPENING_FACES;
       cards = Array.from({ length: N * 2 }, (_, i) => ({
         ring: i < N ? 0 : 1,
         i: i % N,
         face: faces[i % faces.length],
       }));
-      requestAnimationFrame(() => {
-        layer.classList.add('on');
-        resize();
-        playing = true;
-        startT = performance.now();
-        if (sound) playSound();
-        scheduleOpening(setTimeout, () => {
-          try { onReveal?.(); } catch { /* the canvas still finishes */ }
-        }, done);
-        requestAnimationFrame(frame);
-      });
-    };
-    boot();
+    }
+
+    applyArt(preparedOpeningArt());
+    if (!artCache) prepareOpeningArt().then((art) => { if (!settled) applyArt(art); });
+
+    window.addEventListener('resize', resize);
+    if (home) void home.offsetWidth;
+    layer.classList.add('on');
+    resize();
+    playing = true;
+    startT = performance.now();
+    if (sound) playSound();
+    scheduleOpening(setTimeout, () => {
+      try { onReveal?.(); } catch { /* the canvas still finishes */ }
+    }, done);
+    requestAnimationFrame(frame);
   });
 }

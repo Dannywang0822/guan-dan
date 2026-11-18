@@ -20,23 +20,27 @@ import {
   sortCards,
   arrangeGroups,
   upgradeSteps,
-} from '../js/engine.js?v=10';
-import { chooseMove } from '../js/ai.js?v=10';
-import { straightPlanPenalty } from '../js/policy.js?v=10';
-import { Match, unplayedPool } from '../js/controller.js?v=10';
-import { cardMetrics, handLayout, renderCard, twoRowLayout, ARRANGE, DIFFS } from '../js/ui.js?v=10';
+} from '../js/engine.js?v=11';
+import { chooseMove } from '../js/ai.js?v=11';
+import { straightPlanPenalty } from '../js/policy.js?v=11';
+import { Match, unplayedPool } from '../js/controller.js?v=11';
+import { readFileSync } from 'node:fs';
+import { cardMetrics, fadedTableBox, handLayout, renderCard, stageWidthAfterReveal, stageWidthBeforeReveal, twoRowLayout, ARRANGE, DIFFS } from '../js/ui.js?v=11';
 import {
   OPENING_MS,
   OPENING_FACES,
+  RASTER_BLOCKS_CLOCK,
   TABLE_FADE_MS,
+  openingArtState,
   openingBackSVG,
   openingCardSVG,
   openingSample,
+  prepareOpeningArt,
   ringSpinSign,
   scheduleOpening,
   shouldPlayOpening,
-} from '../js/opening.js?v=10';
-import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=10';
+} from '../js/opening.js?v=11';
+import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=11';
 import {
   composeVerdict,
   fanHitIndex,
@@ -44,7 +48,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from '../js/portrait.js?v=10';
+} from '../js/portrait.js?v=11';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -1005,6 +1009,33 @@ check('opening fades the table at 3130ms and settles at 4000ms', () => {
   assert.equal(copy.easy, '合法跟牌，偏出小牌。');
   assert.equal(copy.balanced, '尽量出小牌型、留炸弹，队友大牌一般不压。');
   assert.equal(copy.sharp, '记公开牌，配合让牌与拦截，残局算手数。');
+  assert.equal(RASTER_BLOCKS_CLOCK, false);
+  assert.equal(openingArtState(), 'idle');
+  assert.equal(prepareOpeningArt() instanceof Promise, true);
+  const desk = fadedTableBox(1280, 800);
+  const phone = fadedTableBox(390, 844);
+  assert.equal(stageWidthBeforeReveal(1280), 430);
+  assert.equal(stageWidthAfterReveal(1280), 1280);
+  assert.equal(desk.portrait, false);
+  assert.equal(desk.width, 1280);
+  assert.equal(stageWidthBeforeReveal(390), 390);
+  assert.equal(stageWidthAfterReveal(390), 390);
+  assert.equal(phone.portrait, true);
+  assert.equal(phone.width, 390);
+  const uiSrc = readFileSync(new URL('../js/ui.js', import.meta.url), 'utf8');
+  const mountAt = uiSrc.indexOf('export function mount');
+  const prepAt = uiSrc.indexOf('prepareOpeningArt()');
+  const playAt = uiSrc.indexOf('playOpening(');
+  assert.ok(mountAt >= 0 && prepAt > mountAt && prepAt < playAt);
+  const openSrc = readFileSync(new URL('../js/opening.js', import.meta.url), 'utf8');
+  const playFn = openSrc.slice(openSrc.indexOf('export function playOpening'));
+  assert.equal(playFn.includes('await rasterizeOpeningCards'), false);
+  assert.equal(playFn.includes('await Promise.race'), false);
+  const scheduleAt = playFn.indexOf('scheduleOpening(');
+  assert.ok(scheduleAt > 0);
+  const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.deux-opening.reveal .deux-stage'));
+  assert.ok(css.includes('width: 100%'));
   const rings = openingSample(900);
   const orbit = openingSample(1600);
   const flip = openingSample(2100);

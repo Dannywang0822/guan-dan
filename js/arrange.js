@@ -18,7 +18,7 @@ import {
   sortCards,
   typeLabel,
   wildCount,
-} from './engine.js?v=10';
+} from './engine.js?v=11';
 
 const RANK_I = new Map(RANKS.map((rank, index) => [rank, index]));
 const SUIT_SORT = { S: 0, H: 1, C: 2, D: 3, J: 4 };
