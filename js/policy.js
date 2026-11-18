@@ -41,7 +41,7 @@ import {
   isWild,
   powerValue,
   wildCount,
-} from './engine.js?v=7';
+} from './engine.js?v=8';
 
 export function legalMoves(hand, level, current) {
   const out = [];

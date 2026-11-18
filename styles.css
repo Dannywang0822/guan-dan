@@ -690,14 +690,18 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
 #app.portrait .modes {
   display: flex;
   flex: 1 1 auto;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
 }
 
 #app.portrait .mode-chip {
-  min-height: 32px;
-  padding: 0 8px;
-  flex: 0 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
 }
 
 .text-btn.slim {
@@ -736,6 +740,44 @@ button:focus-visible { outline: 2px solid var(--cinnabar); outline-offset: 2px; 
   background: var(--cinnabar);
   border-color: var(--cinnabar);
 }
+
+.type-chip.picked,
+.type-chip.group-toggle.on {
+  color: var(--cinnabar);
+  border-color: var(--cinnabar);
+  background: #fffdf8;
+}
+
+.type-chip i {
+  margin-left: 2px;
+  font-style: normal;
+  font-size: 10px;
+}
+
+.group-box {
+  position: relative;
+  z-index: 1;
+  margin: 4px 10px 0;
+  min-width: 0;
+}
+
+.group-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.group-note.ok { color: #1d6b42; }
+.group-note.bad { color: var(--cinnabar); }
+.group-note.idle { color: var(--muted); font-weight: 600; }
+
+#app.portrait .group-box { margin: 0; }
+#app.portrait .group-note { font-size: 11px; }
 
 .compose-banner {
   margin: 4px 0 0;

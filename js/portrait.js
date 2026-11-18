@@ -15,7 +15,7 @@ import {
   isWild,
   naturalValue,
   typeLabel,
-} from './engine.js?v=7';
+} from './engine.js?v=8';
 
 export const COMPOSE_TYPES = [
   ['single', '单张'],

@@ -4,8 +4,8 @@ import {
   isJoker,
   isWild,
   wildCount,
-} from './engine.js?v=7';
-import { choosePolicyMove, legalMoves as policyMoves } from './policy.js?v=7';
+} from './engine.js?v=8';
+import { choosePolicyMove, legalMoves as policyMoves } from './policy.js?v=8';
 
 function legalMoves(hand, level, current) {
   return policyMoves(hand, level, current);

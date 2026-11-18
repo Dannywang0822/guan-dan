@@ -16,12 +16,16 @@ import {
   pickReturnCard,
   planTribute,
   powerValue,
+  shuffle,
+  sortCards,
+  arrangeGroups,
   upgradeSteps,
-} from '../js/engine.js?v=7';
-import { chooseMove } from '../js/ai.js?v=7';
-import { straightPlanPenalty } from '../js/policy.js?v=7';
-import { Match, unplayedPool } from '../js/controller.js?v=7';
-import { cardMetrics, handLayout, twoRowLayout } from '../js/ui.js?v=7';
+} from '../js/engine.js?v=8';
+import { chooseMove } from '../js/ai.js?v=8';
+import { straightPlanPenalty } from '../js/policy.js?v=8';
+import { Match, unplayedPool } from '../js/controller.js?v=8';
+import { cardMetrics, handLayout, twoRowLayout, ARRANGE } from '../js/ui.js?v=8';
+import { arrangeHand, nextArrange, planCustomGroups } from '../js/arrange.js?v=8';
 import {
   composeVerdict,
   fanHitIndex,
@@ -29,7 +33,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from '../js/portrait.js?v=7';
+} from '../js/portrait.js?v=8';
 
 const require = createRequire(import.meta.url);
 require('../js/cards.js');
@@ -918,6 +922,250 @@ check('fan ten stays in the left peek', () => {
   const plain = cardSVG('10', 'S', { width: 54 });
   assert.ok(plain.includes('textLength="26"'));
   assert.ok(plain.includes('translate(118 78)') === false || plain.includes('级') === false);
+});
+
+function blocks(items) {
+  const out = [];
+  let cur = [];
+  for (const item of items) {
+    if (item.gap && cur.length) {
+      out.push(cur);
+      cur = [];
+    }
+    cur.push(item.card);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+
+function sameIds(cards, ids) {
+  const got = cards.map((card) => card.id).sort((a, b) => a - b);
+  const want = ids.slice().sort((a, b) => a - b);
+  assert.deepEqual(got, want);
+}
+
+function covers(hand, items) {
+  sameIds(items.map((item) => item.card), hand.map((card) => card.id));
+}
+
+function blockOf(items, ids) {
+  const want = new Set(ids);
+  return blocks(items).find((block) => block.length === want.size && block.every((card) => want.has(card.id)));
+}
+
+check('arrange buttons are the three new modes', () => {
+  assert.deepEqual(Object.keys(ARRANGE), ['rank', 'flush', 'hands']);
+  assert.deepEqual(Object.values(ARRANGE).map((item) => item.name), ['点数', '同花顺面', '最少出牌手数']);
+  assert.equal(nextArrange('rank'), 'flush');
+  assert.equal(nextArrange('flush'), 'hands');
+  assert.equal(nextArrange('hands'), 'rank');
+});
+
+check('rank sort is unchanged', () => {
+  const mixed = take(deck, [
+    ['A', 'S', 0], ['2', 'H', 0], ['K', 'D', 0], ['SJ', 'J', 0], ['5', 'H', 0], ['5', 'S', 0], ['5', 'C', 1],
+  ]);
+  const sorted = sortCards(mixed, '5').map((card) => card.id);
+  assert.deepEqual(arrangeHand(mixed, '5', 'rank').items.map((item) => item.card.id), sorted);
+  assert.ok(arrangeHand(mixed, '5', 'rank').items.every((item) => item.gap === false));
+});
+
+check('straight-flush face groups a made flush and leaves the rest', () => {
+  const made = take(deck, [
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0], ['A', 'S', 0],
+    ['3', 'H', 0], ['4', 'C', 0],
+  ]);
+  const view = arrangeHand(made, '9', 'flush');
+  covers(made, view.items);
+  const flushIds = made.slice(0, 5).map((card) => card.id);
+  const block = blockOf(view.items, flushIds);
+  assert.ok(block, 'made straight flush should sit together');
+  assert.deepEqual(block.map((card) => card.rank), ['10', 'J', 'Q', 'K', 'A']);
+  const ev = evaluateSelection(block, '9', null);
+  assert.equal(ev.ok && ev.combo.type, 'straightflush');
+});
+
+check('straight-flush face keeps a 4-card run together', () => {
+  const near = take(deck, [
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0],
+    ['3', 'H', 0],
+  ]);
+  const view = arrangeHand(near, '9', 'flush');
+  const block = blockOf(view.items, near.slice(0, 4).map((card) => card.id));
+  assert.ok(block);
+  assert.deepEqual(block.map((card) => card.rank), ['10', 'J', 'Q', 'K']);
+});
+
+check('straight-flush face does not spend jokers as fillers', () => {
+  const cards = take(deck, [
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0],
+    ['SJ', 'J', 0], ['BJ', 'J', 0],
+  ]);
+  const view = arrangeHand(cards, '9', 'flush');
+  const run = blockOf(view.items, cards.slice(0, 4).map((card) => card.id));
+  assert.ok(run);
+  assert.ok(run.every((card) => card.suit !== 'J'));
+  const jokerBlock = blocks(view.items).find((block) => block.some((card) => card.suit === 'J'));
+  assert.ok(jokerBlock.every((card) => card.suit === 'J'));
+});
+
+check('straight-flush face keeps a natural bomb and a joker bomb whole', () => {
+  const cards = take(deck, [
+    ['9', 'S', 0], ['9', 'H', 0], ['9', 'C', 0], ['9', 'D', 0],
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0],
+    ['SJ', 'J', 0], ['SJ', 'J', 1], ['BJ', 'J', 0], ['BJ', 'J', 1],
+  ]);
+  const view = arrangeHand(cards, '2', 'flush');
+  covers(cards, view.items);
+  const bomb = blockOf(view.items, cards.slice(0, 4).map((card) => card.id));
+  assert.ok(bomb, 'natural bomb stays together');
+  assert.equal(evaluateSelection(bomb, '2', null).combo.type, 'bomb');
+  const run = blocks(view.items).find((block) => block.some((card) => card.rank === '10'));
+  assert.ok(run);
+  assert.ok(run.every((card) => card.rank !== '9' && card.suit !== 'J'));
+  const kings = blockOf(view.items, cards.slice(8).map((card) => card.id));
+  assert.ok(kings, 'four jokers stay a 天王炸');
+  assert.equal(evaluateSelection(kings, '2', null).combo.type, 'jokerbomb');
+});
+
+check('straight-flush face may complete a flush with a wild without splitting a seed', () => {
+  const cards = take(deck, [
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0],
+    ['9', 'H', 0],
+    ['8', 'S', 0], ['8', 'C', 0], ['8', 'D', 0],
+  ]);
+  const view = arrangeHand(cards, '9', 'flush');
+  covers(cards, view.items);
+  const seed = blockOf(view.items, cards.slice(5).map((card) => card.id));
+  assert.ok(seed, 'three of a kind stays together');
+  assert.ok(seed.every((card) => card.rank === '8'));
+  const flush = blocks(view.items).find((block) => block.some((card) => isWild(card, '9')));
+  assert.ok(flush, 'wild is shown where it completes a straight flush');
+  assert.equal(evaluateSelection(flush, '9', null).combo.type, 'straightflush');
+  assert.ok(flush.every((card) => card.rank !== '8'));
+});
+
+check('min plays beats naive plate packing and keeps bombs and wilds', () => {
+  const packed = take(deck, [
+    ['3', 'S', 0], ['3', 'H', 0], ['3', 'C', 0],
+    ['4', 'S', 0], ['4', 'H', 0], ['4', 'D', 0],
+    ['5', 'S', 0], ['5', 'C', 0],
+    ['6', 'H', 0], ['6', 'D', 0],
+  ]);
+  const naive = arrangeGroups(packed, '9').length;
+  const plan = arrangeHand(packed, '9', 'hands');
+  covers(packed, plan.items);
+  assert.equal(plan.exact, true);
+  assert.ok(plan.plays < naive, `plan ${plan.plays} vs naive ${naive}`);
+  assert.equal(plan.plays, 2);
+  assert.ok(plan.groups.every((group) => group.type === 'fullhouse'));
+  for (const group of plan.groups) {
+    const ev = evaluateSelection(group.cards, '9', null);
+    assert.equal(ev.ok && ev.combo.type, 'fullhouse');
+  }
+
+  const bombHand = take(deck, [
+    ['8', 'S', 0], ['8', 'H', 0], ['8', 'C', 0], ['8', 'D', 0],
+    ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0], ['K', 'S', 0],
+    ['3', 'S', 1], ['3', 'H', 1],
+  ]);
+  const kept = arrangeHand(bombHand, '9', 'hands');
+  covers(bombHand, kept.items);
+  const bomb = kept.groups.find((group) => group.cards.some((card) => card.rank === '8'));
+  sameIds(bomb.cards, bombHand.slice(0, 4).map((card) => card.id));
+  assert.equal(evaluateSelection(bomb.cards, '9', null).combo.type, 'bomb');
+  assert.ok(kept.groups.every((group) => group.type !== 'straight' || group.cards.every((card) => card.rank !== '8')));
+
+  const wildHand = take(deck, [
+    ['5', 'H', 0],
+    ['9', 'S', 0], ['9', 'C', 0], ['9', 'D', 0],
+    ['4', 'S', 0], ['4', 'H', 0],
+  ]);
+  const stingy = arrangeHand(wildHand, '5', 'hands');
+  covers(wildHand, stingy.items);
+  assert.equal(stingy.plays, 2);
+  const upgraded = stingy.groups.find((group) => group.cards.some((card) => isWild(card, '5')));
+  assert.equal(upgraded.type, 'bomb');
+  sameIds(upgraded.cards, wildHand.slice(0, 4).map((card) => card.id));
+});
+
+check('custom group plan accepts a legal hand and rejects a bomb split', () => {
+  const hand = take(deck, [
+    ['3', 'S', 0], ['3', 'H', 0], ['3', 'C', 0],
+    ['4', 'S', 0], ['4', 'H', 0],
+    ['5', 'S', 0], ['5', 'C', 0],
+    ['6', 'H', 0], ['6', 'D', 0],
+  ]);
+  const ok = planCustomGroups(hand, '9', ['fullhouse', 'pair', 'pair']);
+  assert.equal(ok.ok, true, ok.reason);
+  covers(hand, ok.items);
+  assert.equal(ok.leftovers.length, 0);
+  assert.deepEqual(ok.formed.map((group) => group.type), ['fullhouse', 'pair', 'pair']);
+  for (const group of ok.formed) assert.equal(evaluateSelection(group.cards, '9', null).ok, true);
+
+  const bombHand = take(deck, [
+    ['8', 'S', 0], ['8', 'H', 0], ['8', 'C', 0], ['8', 'D', 0],
+    ['9', 'C', 0], ['10', 'S', 0], ['J', 'S', 0], ['Q', 'S', 0],
+  ]);
+  const bad = planCustomGroups(bombHand, '2', ['straight']);
+  assert.equal(bad.ok, false);
+  assert.equal(bad.items, null);
+  assert.match(bad.reason, /炸/);
+  const still = arrangeHand(bombHand, '2', 'rank');
+  const eight = still.items.filter((item) => item.card.rank === '8').map((item) => item.card.id);
+  assert.equal(eight.length, 4);
+});
+
+check('custom group keeps a wild off a plain straight while a bomb seed exists', () => {
+  const hand = take(deck, [
+    ['2', 'H', 0],
+    ['9', 'S', 0], ['9', 'C', 0], ['9', 'D', 0],
+    ['5', 'S', 0], ['6', 'H', 0], ['7', 'C', 0], ['8', 'D', 0],
+  ]);
+  const refused = planCustomGroups(hand, '2', ['straight']);
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /逢人配/);
+  assert.equal(refused.items, null);
+
+  const bombed = planCustomGroups(hand, '2', ['bomb']);
+  assert.equal(bombed.ok, true, bombed.reason);
+  const bomb = bombed.formed[0];
+  assert.equal(bomb.type, 'bomb');
+  assert.ok(bomb.cards.some((card) => isWild(card, '2')));
+  assert.ok(bomb.cards.filter((card) => card.rank === '9').length === 3);
+
+  const open = take(deck, [
+    ['2', 'H', 1], ['5', 'S', 1], ['6', 'H', 0], ['7', 'C', 0], ['8', 'D', 0],
+  ]);
+  const allowed = planCustomGroups(open, '2', ['straight']);
+  assert.equal(allowed.ok, true, allowed.reason);
+  assert.ok(allowed.formed[0].cards.some((card) => isWild(card, '2')));
+  assert.equal(evaluateSelection(allowed.formed[0].cards, '2', null).combo.type, 'straight');
+});
+
+check('a full hand sorts quickly and stays a partition', () => {
+  let seed = 7;
+  const rng = () => {
+    seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const south = shuffle(createDeck(), rng).slice(0, 27);
+  const started = Date.now();
+  const plan = arrangeHand(south, '2', 'hands');
+  const elapsed = Date.now() - started;
+  console.log('min hands', elapsed, 'ms', plan.plays, plan.exact ? 'exact' : 'capped');
+  assert.ok(elapsed < 1500, `min hands took ${elapsed}ms`);
+  covers(south, plan.items);
+  for (const group of plan.groups) {
+    const ev = evaluateSelection(group.cards, '2', null);
+    assert.equal(ev.ok, true, group.label || group.type);
+  }
+  const face = arrangeHand(south, '2', 'flush');
+  covers(south, face.items);
+  const byRank = arrangeHand(south, '2', 'rank');
+  assert.deepEqual(byRank.items.map((item) => item.card.id), sortCards(south, '2').map((card) => card.id));
 });
 
 if (failed) {
