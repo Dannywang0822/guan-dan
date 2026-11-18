@@ -1,19 +1,18 @@
-import { unplayedPool } from './controller.js?v=7';
+import { unplayedPool } from './controller.js?v=8';
 import {
   FINISH_NAME,
   SUIT_SYMBOL,
-  arrangeGroups,
   cardText,
   evaluateSelection,
   isJoker,
   isReturnable,
   isWild,
   pickReturnCard,
-  sortBySuit,
   sortCards,
   typeLabel,
-} from './engine.js?v=7';
-import { chooseMove, listSuggestions } from './ai.js?v=7';
+} from './engine.js?v=8';
+import { chooseMove, listSuggestions } from './ai.js?v=8';
+import { arrangeHand, nextArrange, planCustomGroups } from './arrange.js?v=8';
 import {
   COMPOSE_TYPES,
   chipTypeForCombo,
@@ -23,7 +22,7 @@ import {
   packedMetrics,
   portraitFanLayout,
   zoomCardWidth,
-} from './portrait.js?v=7';
+} from './portrait.js?v=8';
 
 const STEP_LABEL = ['', '头游 + 末游，升 1 级', '头游 + 三游，升 2 级', '头游 + 二游，升 3 级'];
 const COMPASS = ['南', '东', '北', '西'];
@@ -33,21 +32,21 @@ const DIFFS = [
   ['balanced', '均衡', '按实战口诀出牌：对子先行，逢人配留作炸，队友大牌不压。'],
   ['sharp', '精算', '口诀更严，并记已出的王、二、级牌和缺门。'],
 ];
-const ARRANGE = {
+export const ARRANGE = {
   rank: {
     name: '点数',
     now: '当前：按点数理牌',
     body: '按本局单张大小排列：2 最小，级牌仅次于王，同点按花色。',
   },
-  suit: {
-    name: '花色',
-    now: '当前：按花色理牌',
-    body: '黑桃、红桃、梅花、方块分列，同花色内按点数，王牌放在最后。',
+  flush: {
+    name: '同花顺面',
+    now: '当前：按同花顺面理牌',
+    body: '已成同花顺、差一张的同花顺面靠前，同花按点数排开。逢人配只补同花顺，不拆炸弹和天王炸。',
   },
-  group: {
-    name: '牌型',
-    now: '当前：按牌型理牌',
-    body: '炸弹、同花顺、钢板、木板、顺子优先成组，其余按点数。',
+  hands: {
+    name: '最少出牌手数',
+    now: '当前：按最少出牌手数理牌',
+    body: '按整手最少手数分组。优先三带二，顺子不轻易组，逢人配留给炸弹和同花顺，不拆炸弹。',
   },
 };
 const PATTERN = {
@@ -184,16 +183,8 @@ function packedRow(cards, level, maxW, targetW) {
     </div>`).join('')}</div>`;
 }
 
-function orderedHand(hand, level, mode) {
-  if (mode === 'suit') return sortBySuit(hand, level).map((card) => ({ card, gap: false }));
-  if (mode === 'group') {
-    const flat = [];
-    arrangeGroups(hand, level).forEach((group, gi) => {
-      group.cards.forEach((card, i) => flat.push({ card, gap: gi > 0 && i === 0 }));
-    });
-    return flat;
-  }
-  return sortCards(hand, level).map((card) => ({ card, gap: false }));
+function handItems(view) {
+  return view?.items || [];
 }
 
 function washSvg() {
@@ -242,6 +233,12 @@ class UI {
     this.game = game;
     this.selected = new Set();
     this.arrange = 'rank';
+    this.grouping = false;
+    this.groupTypes = [];
+    this.groupResult = null;
+    this.groupKey = '';
+    this.view = null;
+    this.savedCompose = null;
     this.rules = false;
     this.settings = false;
     this.muted = false;
@@ -398,7 +395,7 @@ class UI {
       return;
     }
     if (name === 'arrange') {
-      this.arrange = this.arrange === 'rank' ? 'suit' : this.arrange === 'suit' ? 'group' : 'rank';
+      this.arrange = nextArrange(this.arrange);
       this.paint();
       return;
     }
@@ -408,9 +405,32 @@ class UI {
       this.paint();
       return;
     }
+    if (name === 'group-toggle') {
+      this.grouping = !this.grouping;
+      if (this.grouping) {
+        this.savedCompose = this.composeType;
+        this.composeType = null;
+      } else {
+        this.composeType = this.savedCompose;
+      }
+      this.paint();
+      return;
+    }
+    if (name === 'group-undo') {
+      this.groupTypes.pop();
+      this.paint();
+      return;
+    }
+    if (name === 'group-clear') {
+      this.groupTypes = [];
+      this.paint();
+      return;
+    }
     if (name.startsWith('type-')) {
       const type = name.slice(5);
-      if (COMPOSE_TYPES.some(([id]) => id === type)) this.composeType = type;
+      if (!COMPOSE_TYPES.some(([id]) => id === type)) return;
+      if (this.grouping) this.groupTypes.push(type);
+      else this.composeType = type;
       this.paint();
       return;
     }
@@ -495,7 +515,7 @@ class UI {
     const move = list[this.hintIndex];
     this.selected = new Set(move.cards.map((c) => c.id));
     const chip = chipTypeForCombo(move);
-    if (chip) this.composeType = chip;
+    if (chip && !this.grouping) this.composeType = chip;
     this.paint();
   }
 
@@ -590,9 +610,72 @@ class UI {
     return this.game.seats.some((seat) => seat.hand.length < 10);
   }
 
+  refreshPlans() {
+    const hand = this.game.seats[0]?.hand || [];
+    const level = this.game.level || '2';
+    if (this.grouping && this.groupTypes.length) {
+      const key = `${level}|${this.groupTypes.join('.')}|${hand.map((card) => card.id).sort((a, b) => a - b).join(',')}`;
+      if (key !== this.groupKey) {
+        this.groupKey = key;
+        this.groupResult = planCustomGroups(hand, level, this.groupTypes);
+      }
+    } else {
+      this.groupResult = null;
+      this.groupKey = '';
+    }
+    this.view = this.groupResult?.ok ? this.groupResult : arrangeHand(hand, level, this.arrange);
+  }
+
+  arrangeInfo() {
+    const info = ARRANGE[this.arrange] || ARRANGE.rank;
+    if (this.arrange === 'hands' && this.view && this.view.plays != null && !this.groupResult?.ok) {
+      return { ...info, now: `${info.now} · ${this.view.plays}手` };
+    }
+    return info;
+  }
+
+  modeButtons() {
+    return Object.entries(ARRANGE).map(([id, item]) => `
+      <button type="button" class="mode-chip${this.arrange === id ? ' on' : ''}" data-act="mode-${id}" aria-pressed="${this.arrange === id}">${item.name}</button>`).join('');
+  }
+
+  groupBoxHtml(withCompose) {
+    const toggle = `<button type="button" class="type-chip group-toggle${this.grouping ? ' on' : ''}" data-act="group-toggle" aria-pressed="${this.grouping}">组牌</button>`;
+    let chips = '';
+    if (this.grouping) {
+      chips = COMPOSE_TYPES.map(([id, name]) => {
+        const count = this.groupTypes.filter((type) => type === id).length;
+        return `<button type="button" class="type-chip${count ? ' picked' : ''}" data-act="type-${id}" aria-pressed="${count > 0}">${name}${count ? `<i>${count}</i>` : ''}</button>`;
+      }).join('');
+    } else if (withCompose) {
+      chips = COMPOSE_TYPES.map(([id, name]) => `
+        <button type="button" class="type-chip${this.composeType === id ? ' on' : ''}" data-act="type-${id}" aria-pressed="${this.composeType === id}">${name}</button>`).join('');
+    }
+    const actions = this.grouping && this.groupTypes.length
+      ? `<button type="button" class="text-btn slim" data-act="group-undo">撤销</button><button type="button" class="text-btn slim" data-act="group-clear">清空</button>`
+      : '';
+    let note = '';
+    let tone = 'idle';
+    if (this.grouping) {
+      if (!this.groupTypes.length) note = '点选牌型，验证这一手能不能组成';
+      else if (this.groupResult?.ok) {
+        note = this.groupResult.summary;
+        tone = 'ok';
+      } else {
+        note = `组不成：${this.groupResult?.reason || '牌型对不上'}。手牌保持原样`;
+        tone = 'bad';
+      }
+    }
+    const noteHtml = note
+      ? `<div class="group-note ${tone}">${actions}<span>${esc(note)}</span></div>`
+      : '';
+    return `<div class="group-box"><div class="type-row">${toggle}${chips}</div>${noteHtml}</div>`;
+  }
+
   paint({ live = false } = {}) {
     this.syncHand();
     this.syncSelection();
+    this.refreshPlans();
     const portrait = this.portrait();
     if (portrait && this.counterPin !== false && this.counterVisible()) this.counterSheet = true;
     this.app.classList.toggle('portrait', portrait);
@@ -730,7 +813,7 @@ class UI {
     const width = this.width();
     const metrics = cardMetrics(width);
     const mine = game.turn === 0 && game.phase === 'play';
-    const items = orderedHand(game.seats[0].hand, game.level, this.arrange);
+    const items = handItems(this.view);
     const height = this.app.clientHeight || window.innerHeight || 800;
     const draft = twoRowLayout({ width, height, n: items.length });
     const topGaps = items.slice(0, draft.top).filter((item) => item.gap).length;
@@ -779,8 +862,9 @@ class UI {
           </div>
           <p class="status">${esc(game.message || '')}</p>
         </div>
-        ${this.tributeBar()}
-        ${this.ruleBarHtml()}
+          ${this.tributeBar()}
+          ${this.ruleBarHtml()}
+          ${this.groupBoxHtml(false)}
         <div class="hand-zone">
           <div class="hand-rows" style="gap:${layout.rowGap}px">${hand}</div>
         </div>
@@ -793,7 +877,7 @@ class UI {
     const game = this.game;
     const width = this.width();
     const mine = game.turn === 0 && game.phase === 'play';
-    const items = orderedHand(game.seats[0].hand, game.level, this.arrange);
+    const items = handItems(this.view);
     const returning = game.phase === 'tributeChoice' && game.tribute?.waiting?.kind === 'return';
     const selected = items.filter((item) => this.selected.has(item.card.id)).map((item) => item.card);
     const current = game.phase === 'play' ? (game.trick?.combo || null) : null;
@@ -870,11 +954,8 @@ class UI {
   }
 
   portraitToolsHtml(verdict) {
-    const info = ARRANGE[this.arrange] || ARRANGE.rank;
-    const modes = Object.entries(ARRANGE).map(([id, item]) => `
-      <button type="button" class="mode-chip${this.arrange === id ? ' on' : ''}" data-act="mode-${id}" aria-pressed="${this.arrange === id}">${item.name}</button>`).join('');
-    const types = COMPOSE_TYPES.map(([id, name]) => `
-      <button type="button" class="type-chip${this.composeType === id ? ' on' : ''}" data-act="type-${id}" aria-pressed="${this.composeType === id}">${name}</button>`).join('');
+    const info = this.arrangeInfo();
+    const modes = this.modeButtons();
     const banner = verdict.state === 'empty' ? '' : `<p class="compose-banner ${esc(verdict.state)}">${esc(verdict.text)}</p>`;
     const rule = this.ruleOpen
       ? `<p class="rule-now"><span><b>${esc(info.now)}</b>${esc(info.body)}</span></p>`
@@ -888,7 +969,7 @@ class UI {
           <button type="button" class="text-btn slim" data-act="settings">设置</button>
         </div>
         ${rule}
-        <div class="type-row">${types}</div>
+        ${this.groupBoxHtml(true)}
         ${banner}
       </section>`;
   }
@@ -988,13 +1069,11 @@ class UI {
   }
 
   ruleBarHtml() {
-    const info = ARRANGE[this.arrange] || ARRANGE.rank;
-    const chips = Object.entries(ARRANGE).map(([id, item]) => `
-      <button type="button" class="mode-chip${this.arrange === id ? ' on' : ''}" data-act="mode-${id}" aria-pressed="${this.arrange === id}">${item.name}</button>`).join('');
+    const info = this.arrangeInfo();
     const pattern = this.patternLine();
     return `
       <section class="rulebar" aria-live="polite">
-        <div class="modes">${chips}</div>
+        <div class="modes">${this.modeButtons()}</div>
         <p class="rule-now"><span class="rule-seal">规则</span><span><b>${esc(info.now)}</b>${esc(info.body)}</span></p>
         ${pattern ? `<p class="pattern-line">${esc(pattern)}</p>` : ''}
       </section>`;
@@ -1185,7 +1264,7 @@ class UI {
           <p>新的一局发牌后进贡。末游把最大的一张交给头游（逢人配不交）。若是双下，三游和末游都交，较大的给头游，较小的给二游。收到贡牌的人还一张牌面 ≤10 的牌。还完由进贡给头游的那家先出。进贡方手里有两张大王则抗贡，改由头游先出。没有 ≤10 的牌时，还最小的非王牌。</p>
           <p>已经打到 A 的一队，这一局必须头游并且队友不是末游，才算过 A。如果只是头游 + 末游，停在 A 继续打。</p>
           <h3>理牌和记牌</h3>
-          <p>理牌在点数、花色、牌型之间切换，规则条会留在牌桌上。选中手牌时，条上写出这种牌型怎么比。例如顺子固定 5 张，按牌面点数衔接，级牌不另算。竖屏手机上手牌叠成一排，点一下会抬起，并在上方放大看清牌面。可以先点牌型再自由组合，不合这种牌型或压不过时不能出牌。</p>
+          <p>理牌有点数、同花顺面、最少出牌手数。点数按本局大小排。同花顺面把已成或只差一张的同花顺排在一起，逢人配只补同花顺，不拆炸弹和天王炸。最少出牌手数按整手最少的合法出牌次数分组，优先三带二，不轻易组顺，逢人配留给炸弹和同花顺。横屏和电脑上，规则条下面有「组牌」：点选若干牌型，能组成就把整手按这个计划排开，组不成会说明原因并保持原来的排法。竖屏手机上，组牌和出牌用的牌型条分开，出牌仍然是点一种牌型再自由组合。选中手牌时，条上写出这种牌型怎么比。竖屏手牌叠成一排，点一下会抬起，并在上方放大看清牌面。不合这种牌型或压不过时不能出牌。</p>
           <p>记牌器在任一家手牌少于 10 张时自动打开，也可以随时点「记牌」。它只显示四家剩余张数，以及还没打出的花色和点数，不亮别人的具体手牌。收起之后可以再打开。</p>
           <h3>电脑难度</h3>
           <p>开局选定轻松、均衡或精算，三家电脑同一档，设置里可以改。轻松合法跟牌、偏出小牌。均衡和精算按实战口诀选牌：惜用逢人配，残局按对手张数防，炸弹留给能决定一局的那一手。精算还会记已经打出的王、二、级牌和缺门。</p>
